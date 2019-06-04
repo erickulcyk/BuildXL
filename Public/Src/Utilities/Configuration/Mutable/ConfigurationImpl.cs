@@ -39,6 +39,7 @@ namespace BuildXL.Utilities.Configuration.Mutable
             CommandLineEnabledUnsafeOptions = new List<string>();
             Ide = new IdeConfiguration();
             ResolverDefaults = new ResolverDefaults();
+            AgentEndPoint = new List<string>();
         }
 
         /// <summary>
@@ -74,6 +75,7 @@ namespace BuildXL.Utilities.Configuration.Mutable
             FrontEnd = new FrontEndConfiguration(template.FrontEnd, pathRemapper);
             CommandLineEnabledUnsafeOptions = new List<string>(template.CommandLineEnabledUnsafeOptions);
             Ide = new IdeConfiguration(template.Ide, pathRemapper);
+            AgentEndPoint = new List<string>(template.AgentEndPoint);
             InCloudBuild = template.InCloudBuild;
             ResolverDefaults = new ResolverDefaults(template.ResolverDefaults);
         }
@@ -482,6 +484,27 @@ namespace BuildXL.Utilities.Configuration.Mutable
 
         /// <inheritdoc />
         IIdeConfiguration IConfiguration.Ide => Ide;
+
+        /// <nodoc />
+        [SuppressMessage("Microsoft.Usage", "CA2227:CollectionPropertiesShouldBeReadOnly")]
+        public List<string> AgentEndPoint
+        {
+            get
+            {
+                AssertNotInvalid();
+                return m_agentEndPoint;
+            }
+
+            set
+            {
+                m_agentEndPoint = value;
+            }
+        }
+
+        private List<string> m_agentEndPoint;
+
+        /// <inhertidoc />
+        IReadOnlyList<string> IConfiguration.AgentEndPoint => AgentEndPoint;
 
         /// <inheritdoc />
         public bool? InCloudBuild { get; set; }

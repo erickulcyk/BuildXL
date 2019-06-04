@@ -1,0 +1,37 @@
+syntax = "proto3";
+
+package BuildXL.Cloud.Proto;
+
+import "IO.proto";
+import "Process.proto";
+import "RemoteCas.proto";
+
+message BuildRequest {
+    BuildXL.Proto.PathTable pathTable = 1;
+    BuildXL.Pips.Proto.Process process = 2;
+    map<int32, bytes> inputFiles = 3;
+}
+
+// The greeting service definition.
+service RemoteAgentService {
+    // Sends a greeting
+    rpc RunProcess (BuildRequest) returns (BuildResponse) {}
+}
+
+message BuildResponse {
+    BuildXL.Proto.PathTable pathTable = 1;
+    int32 exitCode= 2;
+    repeated OutputFile outputFile = 3;
+    repeated OutputDirectory outputDirectories = 4;
+}
+
+message OutputFile {
+    BuildXL.Proto.FileArtifact file = 1;
+    int64 length = 2;
+    ContentHashAndHashTypeData contentHash = 3;
+}
+
+message OutputDirectory {
+    BuildXL.Proto.DirectoryArtifact directory = 1;
+    repeated BuildXL.Proto.FileArtifact files = 2;
+}

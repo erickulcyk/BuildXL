@@ -1825,6 +1825,8 @@ namespace BuildXL.Engine
                                             workerservice = m_workerService;
                                         }
                                     }
+                                    //m_masterService.EnableCloud(engineSchedule);
+
 
                                     var stats = default(ExecuteStatistics);
                                     using (var executePhase = StartPhase(

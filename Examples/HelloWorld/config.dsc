@@ -16,5 +16,12 @@ config({
             isWritable: true,
             isReadable: true
         },
+        {
+            name: a`Agent`,
+            path: p`d:/src2/anybuild/distrib/debug/agent`,
+            trackSourceFileChanges: true,
+            isWritable: true,
+            isReadable: true
+        },
     ]
 });

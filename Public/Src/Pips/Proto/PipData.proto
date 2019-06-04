@@ -1,0 +1,41 @@
+syntax = "proto3";
+
+package BuildXL.Pips.Proto;
+
+message PipData {
+    string hackedString = 100;
+    /*
+    string entriesString = 1;
+    
+    PipDataEntry headerEntry = 2;
+    repeated PipDataEntry entries = 3;
+    PipDataFragmentEscaping escaping = 4;
+    */
+}
+
+/*
+message PipDataEntry {
+    PipDataEntryType entryType = 1;
+    PipDataFragmentEscaping escaping = 2;
+    string stringValue = 3;
+    int32 intValue = 4;
+}
+
+enum PipDataEntryType {
+    PipDataEntryTypeInvalid = 0;
+    StringLiteral = 1;
+    AbsolutePath = 2;
+    VsoHashEntry1Path = 3;
+    VsoHashEntry2RewriteCount = 4;
+    IpcMoniker = 5;
+    NestedDataHeader = 6;
+    NestedDataStart = 7;
+    NestedDataEnd = 8;
+}
+
+enum PipDataFragmentEscaping {
+    PipDataFragmentEscapingInvalid = 0;
+    NoEscaping = 1;
+    CRuntimeArgumentRules = 2;
+}
+*/

@@ -196,7 +196,7 @@ namespace BuildXL.Scheduler.Artifacts
 
         private SemanticPathExpander SemanticPathExpander => m_host.SemanticPathExpander;
 
-        private LocalDiskContentStore LocalDiskContentStore => m_host.LocalDiskContentStore;
+        public LocalDiskContentStore LocalDiskContentStore => m_host.LocalDiskContentStore;
 
         private IArtifactContentCache ArtifactContentCache { get; }
 

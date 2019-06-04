@@ -4,7 +4,9 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics.ContractsLight;
+using System.Linq;
 using System.Text;
+using BuildXL.Pips.Proto;
 using BuildXL.Utilities;
 
 namespace BuildXL.Pips.Operations
@@ -480,6 +482,36 @@ namespace BuildXL.Pips.Operations
                 m_currentIndex = 0;
             }
         }
+        #endregion
+
+        #region ProtoBuf Serialization
+
+        public static Proto.PipData ToProto(ProtobufSerializationContext context, PipData obj)
+        {
+            if (obj.IsValid)
+            {
+                return new Proto.PipData()
+                       {
+                           HackedString = obj.ToString(context.PathTable),
+                       };
+            }
+
+            return new Proto.PipData();
+        }
+
+        public static PipData FromProto(ProtobufSerializationContext context, Proto.PipData p)
+        {
+            if (string.IsNullOrEmpty(p.HackedString))
+            {
+                return PipData.Invalid;
+            }
+            
+            // We have created a too complicated version of PipData  and now need a builder to create one with just a string :(
+            var builder = new PipDataBuilder(context.PathTable.StringTable);
+            builder.Add(p.HackedString);
+            return builder.ToPipData(context.PathTable.StringTable.Empty, PipDataFragmentEscaping.NoEscaping);
+        }
+
         #endregion
     }
 }

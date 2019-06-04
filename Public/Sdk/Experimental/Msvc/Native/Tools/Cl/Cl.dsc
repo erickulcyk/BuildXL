@@ -271,7 +271,10 @@ function evaluateOneSourceFile(
         arguments: cmdArgs,
         dependencies: [...includes, ...implicitInputs],
         implicitOutputs: implicitOutputs,
-        tags: args.tags,
+        tags: [
+            "clCompile",
+            ...(args.tags || [])
+        ],
     });
 
     let compOutput = <CompilationOutput> {

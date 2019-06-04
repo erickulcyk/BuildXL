@@ -4,8 +4,10 @@
 using System.Diagnostics.CodeAnalysis;
 using System.Diagnostics.ContractsLight;
 using System.Globalization;
+using System.Linq;
 using System.Text;
 using BuildXL.Ipc.Interfaces;
+using BuildXL.Pips.Proto;
 using BuildXL.Utilities;
 using BuildXL.Utilities.Collections;
 
@@ -387,6 +389,19 @@ namespace BuildXL.Pips.Operations
             var qualifierName = context.QualifierTable.GetFriendlyUserString(Provenance.QualifierId);
 
             return $"{moduleName} - {valueName}{toolName} [{qualifierName}]";
+        }
+
+        public static Proto.PipBase ToProtoBase(ProtobufSerializationContext context, Pip obj)
+        {
+            var result = new Proto.PipBase()
+                   {
+                       Id = obj.m_pipId.Value,
+                       PipType = (Proto.PipType)(int)obj.PipType,
+                   };
+
+            result.Tags.AddRange(obj.Tags.Select(tag => context.ToProto(tag)));
+
+            return result;
         }
     }
 }

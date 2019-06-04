@@ -1,0 +1,38 @@
+syntax = "proto3";
+
+package BuildXL.Proto;
+
+// TODO: See if we can get a proper effecient implementation of this pattern in ProtoBufs
+message AbsolutePath {
+    int32 id = 1;
+    int32 parent = 2;
+    string name = 3;
+}
+
+message FileArtifact {
+    int32 pathId = 1;
+    int32 rewriteCount = 2;
+}
+
+message DirectoryArtifact {
+    int32 pathId = 1;
+    uint32 partialSealId = 2;
+    bool isShared = 3;
+}
+
+message FileArtifactWithAttributes {
+    int32 pathId = 1;
+    int32 rewriteCount = 2;
+    FileExistance fileExistence = 3;
+}
+
+enum FileExistance {
+    Required = 0;
+    Temporary = 1;
+    Optional = 2;
+}
+
+message PathTable {
+    int32 nextLocalPathId = 1;
+    repeated AbsolutePath paths = 2;
+}

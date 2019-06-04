@@ -1,0 +1,75 @@
+﻿<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>netcoreapp3.0</TargetFramework>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Remove="@(Protobuf)" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Grpc.AspNetCore.Server" Version="0.1.20-pre1" />
+    <PackageReference Include="Google.Protobuf" Version="3.7.0" />
+    <PackageReference Include="Grpc.Core" Version="1.20.1" />
+
+    <PackageReference Include="Grpc.Tools" Version="1.20.0-pre3" PrivateAssets="All" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Folder Include="Protos\" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Protobuf Include="..\..\Engine\Scheduler\Cloud\CloudWorkerService.proto" GrpcServices="Server">
+      <Link>Protos\CloudWorkerService.proto</Link>
+      <AdditionalImportDirs>..\..\Pips\Proto</AdditionalImportDirs>
+    </Protobuf>
+  </ItemGroup>
+
+  <ItemGroup>
+    <Reference Include="BuildXL.Cache.ContentStore.Hashing">
+      <HintPath>..\..\..\..\Out\Bin\debug\win-x64\BuildXL.Cache.ContentStore.Hashing.dll</HintPath>
+    </Reference>
+    <Reference Include="BuildXL.Cache.ContentStore.Interfaces">
+      <HintPath>..\..\..\..\Out\Bin\debug\win-x64\BuildXL.Cache.ContentStore.Interfaces.dll</HintPath>
+    </Reference>
+    <Reference Include="BuildXL.Engine.Cache">
+      <HintPath>..\..\..\..\Out\Bin\debug\win-x64\BuildXL.Engine.Cache.dll</HintPath>
+    </Reference>
+    <Reference Include="BuildXL.Ipc">
+      <HintPath>..\..\..\..\Out\Bin\debug\win-x64\BuildXL.Ipc.dll</HintPath>
+    </Reference>
+    <Reference Include="BuildXL.Native">
+      <HintPath>..\..\..\..\Out\Bin\debug\win-x64\BuildXL.Native.dll</HintPath>
+    </Reference>
+    <Reference Include="BuildXL.Pips">
+      <HintPath>..\..\..\..\Out\Bin\debug\win-x64\BuildXL.Pips.dll</HintPath>
+    </Reference>
+    <Reference Include="BuildXL.Pips.Proto">
+      <HintPath>..\..\..\..\Out\Bin\debug\win-x64\BuildXL.Pips.Proto.dll</HintPath>
+    </Reference>
+    <Reference Include="BuildXL.Processes">
+      <HintPath>..\..\..\..\Out\Bin\debug\win-x64\BuildXL.Processes.dll</HintPath>
+    </Reference>
+    <Reference Include="BuildXL.Scheduler">
+      <HintPath>..\..\..\..\Out\Bin\debug\win-x64\BuildXL.Scheduler.dll</HintPath>
+    </Reference>
+    <Reference Include="BuildXL.Storage">
+      <HintPath>..\..\..\..\Out\Bin\debug\win-x64\BuildXL.Storage.dll</HintPath>
+    </Reference>
+    <Reference Include="BuildXL.Utilities">
+      <HintPath>..\..\..\..\Out\Bin\debug\win-x64\BuildXL.Utilities.dll</HintPath>
+    </Reference>
+    <Reference Include="BuildXL.Utilities.Collections">
+      <HintPath>..\..\..\..\Out\Bin\debug\win-x64\BuildXL.Utilities.Collections.dll</HintPath>
+    </Reference>
+    <Reference Include="BuildXL.Utilities.Configuration">
+      <HintPath>..\..\..\..\Out\Bin\debug\win-x64\BuildXL.Utilities.Configuration.dll</HintPath>
+    </Reference>
+    <Reference Include="BuildXL.Utilities.Instrumentation.Common">
+      <HintPath>..\..\..\..\Out\Bin\debug\win-x64\BuildXL.Utilities.Instrumentation.Common.dll</HintPath>
+    </Reference>
+  </ItemGroup>
+
+</Project>

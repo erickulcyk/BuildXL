@@ -8,6 +8,8 @@ export const dll = BuildXLSdk.library({
     assemblyName: "BuildXL.Pips",
     sources: globR(d`.`, "*.cs"),
     references: [
+        Proto.dll,
+        
         importFrom("BuildXL.Cache.ContentStore").Hashing.dll,
         importFrom("BuildXL.Cache.ContentStore").UtilitiesCore.dll,
         importFrom("BuildXL.Cache.ContentStore").Interfaces.dll,
@@ -18,7 +20,8 @@ export const dll = BuildXLSdk.library({
         importFrom("BuildXL.Utilities").Ipc.dll,
         importFrom("BuildXL.Utilities").Storage.dll,
         importFrom("BuildXL.Utilities").Collections.dll,
-        importFrom("BuildXL.Utilities").Configuration.dll,        
+        importFrom("BuildXL.Utilities").Configuration.dll,
+        importFrom("Google.Protobuf").pkg,
     ],
     internalsVisibleTo: [
         "BuildXL.Scheduler",

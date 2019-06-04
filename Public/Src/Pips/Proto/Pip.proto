@@ -1,0 +1,11 @@
+syntax = "proto3";
+
+package BuildXL.Pips.Proto;
+
+import "Process.proto";
+
+message Pip {
+    oneof pip_oneof {
+        Process process = 2;
+    }
+}

@@ -1,0 +1,75 @@
+syntax = "proto3";
+
+package BuildXL.Pips.Proto;
+
+import "PipBase.proto";
+import "IO.proto";
+import "PipData.proto";
+
+message Process {
+    PipBase base = 1;
+    // TODO: Figure out how to do a flags enum in ProtoBuff.
+    // From the enum description it would work for the C#, C++ and go. But Java wouldn't support this.
+    // Using int32 for now.
+    int32 processOptions = 2;
+    AbsentPathProbeInUndeclaredOpaquesMode absentPathProbeInUndeclaredOpaquesMode = 3;
+    // free: 4
+    // free: 5
+    StandardInput standardInput = 6;
+    BuildXL.Proto.FileArtifact standardOutput = 7;
+    BuildXL.Proto.FileArtifact standardError = 8;
+    int32 standardDirectory = 9;
+    int32 uniqueOutputDirectory = 10;
+    int32 uniqueRedirectedDirectoryRoot = 11;
+    BuildXL.Proto.FileArtifact responseFile = 12;
+    PipData responseFileData = 13;
+    BuildXL.Proto.FileArtifact executable = 14;
+    string toolDescription = 15;
+    int32 workingDirectory = 16;
+    PipData arguments = 17;
+    repeated EnvironmentVariable environmentVariables = 18;
+    // These are System.TimeSpan ticks: https://docs.microsoft.com/en-us/dotnet/api/system.timespan.-ctor?view=netframework-4.8#System_TimeSpan__ctor_System_Int64_
+    int64 warningTimeout = 19;
+    // These are System.TimeSpan ticks: https://docs.microsoft.com/en-us/dotnet/api/system.timespan.-ctor?view=netframework-4.8#System_TimeSpan__ctor_System_Int64_
+    int64 timeout = 20;
+    repeated BuildXL.Proto.FileArtifact dependencies = 21;
+    repeated BuildXL.Proto.DirectoryArtifact directoryDependencies = 22;
+    repeated uint32 orderDependencies = 23;
+    repeated int32 untrackedPaths = 24;
+    repeated int32 untrackedScopes = 25;
+    repeated int32 successExitCodes = 26;
+    repeated int32 retryExitCodes = 27;
+    string warningRegex = 28;
+    string rrrorRegex = 29;
+    repeated BuildXL.Proto.FileArtifactWithAttributes fileOutputs = 30;
+    repeated BuildXL.Proto.DirectoryArtifact directoryOutputs = 31;
+    repeated ProcessSemaphoreInfo semaphores = 32;
+    int32 tempDirectory = 33;
+    repeated int32 additionalTempDirectories = 34;
+    //ServiceInfo serviceInfo = 35;
+    int32 weight = 36;
+    bool testRetries = 37;
+}
+
+enum AbsentPathProbeInUndeclaredOpaquesMode {
+    Unsafe = 0;
+    Strict = 1;
+    Relaxed = 2;
+};
+
+message StandardInput {
+    BuildXL.Proto.FileArtifact file = 1;
+    PipData data = 2;
+}
+
+message EnvironmentVariable {
+    string name = 1;
+    PipData value = 2;
+    bool isPassThrough = 3;
+}
+
+message ProcessSemaphoreInfo {
+    string name = 1;
+    int32 value = 2;
+    int32 limit = 3;
+}

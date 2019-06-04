@@ -5,6 +5,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics.ContractsLight;
 using System.IO;
+using System.Linq;
 using System.Text;
 using BuildXL.Native.Processes;
 using BuildXL.Processes.Containers;
@@ -12,7 +13,6 @@ using BuildXL.Utilities;
 using BuildXL.Utilities.Configuration;
 using BuildXL.Utilities.Instrumentation.Common;
 using static BuildXL.Utilities.BuildParameters;
-using System.Linq;
 
 namespace BuildXL.Processes
 {

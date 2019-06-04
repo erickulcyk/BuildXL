@@ -206,6 +206,9 @@ namespace BuildXL
                         OptionHandlerFactory.CreateOption(
                             "adminRequiredProcessExecutionMode",
                             opt => sandboxConfiguration.AdminRequiredProcessExecutionMode = CommandLineUtilities.ParseEnumOption<AdminRequiredProcessExecutionMode>(opt)),
+                        OptionHandlerFactory.CreateOption(
+                            "agentEndPoint",
+                            opt => configuration.AgentEndPoint.AddRange(CommandLineUtilities.ParseRepeatingOption(opt, ";", x => x))),
                         OptionHandlerFactory.CreateBoolOption(
                             "allowFetchingCachedGraphFromContentCache",
                             sign => cacheConfiguration.AllowFetchingCachedGraphFromContentCache = sign),

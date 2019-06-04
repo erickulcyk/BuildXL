@@ -57,6 +57,12 @@ namespace BuildXL {
                         ]
                     },
                     {
+                        subfolder: r`RemoteAgent`,
+                        contents: [
+                            importFrom("BuildXL.Tools").RemoteAgent.exe,
+                        ]
+                    },
+                    {
                         subfolder: r`NinjaGraphBuilder`,
                         contents: [
                             importFrom("BuildXL.Tools").NinjaGraphBuilder.exe,

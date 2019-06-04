@@ -47,6 +47,7 @@ config({
             repositories: importFile(f`config.microsoftInternal.dsc`).isMicrosoftInternal
                 ? {
                     "BuildXL.Selfhost": "https://pkgs.dev.azure.com/cloudbuild/_packaging/BuildXL.Selfhost/nuget/v3/index.json",
+                    "BuildXL.Selfhost.MyGet": "https://pkgs.dev.azure.com/cloudbuild/_packaging/BuildXL.Selfhost.MyGet/nuget/v3/index.json",
                     // Note: From a compliance point of view it is important that MicrosoftInternal has a single feed.
                     // If you need to consume packages make sure they are upstreamed in that feed.
                   }
@@ -60,6 +61,7 @@ config({
                   },
 
             packages: [
+                
                 { id: "Bond.Core.CSharp", version: "8.0.0" },
                 { id: "Bond.CSharp", version: "8.0.0" },
                 { id: "Bond.CSharp.osx-x64", version: "8.0.0" },
@@ -189,7 +191,7 @@ config({
                 { id: "Microsoft.Bcl.Async", version: "1.0.168" },
                 { id: "Microsoft.Bcl.Build", version: "1.0.14" },
                 { id: "StackExchange.Redis.StrongName", version: "1.2.6" },
-                { id: "System.Interactive.Async", version: "3.1.1" },
+                { id: "System.Interactive.Async", version: "3.2.0" },
                 { id: "TransientFaultHandling.Core", version: "5.1.1209.1" },
                 { id: "Grpc", version: "1.18.0" },
                 { id: "Grpc.Core", version: "1.18.0" },
@@ -588,6 +590,12 @@ config({
             path: p`Out/Bin`,
             trackSourceFileChanges: true,
             isWritable: true,
+            isReadable: true,
+        },{
+            name: a`AnyBuild`,
+            path: p`d:/src2/AnyBuild`,
+            trackSourceFileChanges: true,
+            isWritable: false,
             isReadable: true,
         },
         {

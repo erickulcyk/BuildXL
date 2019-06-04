@@ -3,6 +3,7 @@
 
 using System;
 using System.Diagnostics.ContractsLight;
+using BuildXL.Pips.Proto;
 using BuildXL.Utilities;
 
 namespace BuildXL.Pips.Operations
@@ -73,6 +74,27 @@ namespace BuildXL.Pips.Operations
         }
         #endregion
 
+        #region Protobuf serialization
+        #endregion
+
+        public static Proto.EnvironmentVariable ToProto(ProtobufSerializationContext context, EnvironmentVariable obj)
+        {
+            return new Proto.EnvironmentVariable
+                   {
+                       IsPassThrough = obj.IsPassThrough,
+                       Name = context.ToProto(obj.Name),
+                       Value = PipData.ToProto(context, obj.Value),
+                   };
+        }
+
+        public static EnvironmentVariable FromProto(ProtobufSerializationContext context, Proto.EnvironmentVariable protoEnv)
+        {
+            return new EnvironmentVariable(
+                context.FromProto(protoEnv.Name),
+                PipData.FromProto(context, protoEnv.Value),
+                protoEnv.IsPassThrough);
+        }
+
         #region IEquatable<EnvironmentVariable> implementation
 
         /// <summary>
@@ -136,6 +158,7 @@ namespace BuildXL.Pips.Operations
         {
             return !left.Equals(right);
         }
+
         #endregion
     }
 }

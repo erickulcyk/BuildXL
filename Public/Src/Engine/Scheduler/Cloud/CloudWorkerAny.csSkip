@@ -1,0 +1,961 @@
+﻿// Copyright (c) Microsoft. All rights reserved.
+// Licensed under the MIT license. See LICENSE file in the project root for full license information.
+
+#if FEATURE_CORECLR
+
+// HACK SOMEHOW THIS GetS BUILD FOR CORECLR Regardless of qualifier
+// so have to place a dummy class here to satify that build.
+using BuildXL.Native.IO;
+using BuildXL.Scheduler.Artifacts;
+using System.Collections.Generic;
+
+namespace BuildXL.Scheduler.Distribution
+{
+    /// <summary>
+    /// Worker that schedules the work to a cloud based endpoint
+    /// </summary>
+    public class CloudWorker : Worker
+    {
+        public CloudWorker(uint workerId, string name, IReadOnlyList<string> endPoint, FileContentManager fileContentManager, ITempDirectoryCleaner tempCleaner)
+            : base(workerId, name)
+        {
+        }
+    }
+}
+#else
+using System;
+using System.Collections.Concurrent;
+using System.Collections.Generic;
+using System.Diagnostics.ContractsLight;
+using System.Globalization;
+using System.IO;
+using System.Linq;
+using System.Text;
+using System.Threading;
+using System.Threading.Tasks;
+using AnyBuild.Agent.Grpc;
+using AnyBuild.Client;
+using AnyBuild.Client.Telemetry;
+using AnyBuild.Common.Grpc;
+using BuildXL.Cache.ContentStore.Hashing;
+using BuildXL.Cache.ContentStore.Interfaces.Utils;
+using BuildXL.Cache.MemoizationStore.Interfaces.Sessions;
+using BuildXL.Native.IO;
+using BuildXL.Pips;
+using BuildXL.Pips.Operations;
+using BuildXL.Processes;
+using BuildXL.Scheduler.Artifacts;
+using BuildXL.Scheduler.Cloud;
+using BuildXL.Scheduler.Graph;
+using BuildXL.Scheduler.Tracing;
+using BuildXL.Storage;
+using BuildXL.Utilities;
+using BuildXL.Utilities.Collections;
+using BuildXL.Utilities.Tasks;
+using Grpc.Core;
+using static BuildXL.Utilities.BuildParameters;
+using OperatingSystemHelper = BuildXL.Utilities.OperatingSystemHelper;
+
+namespace BuildXL.Scheduler.Distribution
+{
+    /// <summary>
+    /// Worker that schedules the work to a cloud based endpoint
+    /// </summary>
+    public class CloudWorkerAny : Worker
+    {
+        private readonly ITempDirectoryCleaner m_tempDirectoryCleaner;
+
+        private FileContentManager m_fileContentManager;
+        /// <summary>
+        /// Set of pips that are currently executing. Executing here means an external child process is running.
+        /// </summary>
+        public ConcurrentDictionary<PipId, Unit> CurrentlyExecutingPips = new ConcurrentDictionary<PipId, Unit>();
+
+        private IReadOnlyList<string> m_endPoints;
+
+        private IAnyBuildClient m_client;
+
+        /// <nodoc />
+        public CloudWorkerAny(
+            uint workerId, 
+            string name,
+            IReadOnlyList<string> endPoints,
+            FileContentManager fileContentManager, 
+            ITempDirectoryCleaner tempCleaner)
+            : base(workerId, name)
+        {
+            m_fileContentManager = fileContentManager;
+            m_tempDirectoryCleaner = tempCleaner;
+            m_endPoints = endPoints;
+            m_client = AnyBuildClientFactory.CreateClient(
+                Guid.NewGuid(),
+                m_fileContentManager.LocalDiskContentStore.FileContentTable,
+                endPoints.Select(e => new AgentInfo(e, 11337))
+            );
+        }
+
+        /// <inheritdoc />
+        public override async Task<PipResultStatus> MaterializeInputsAsync(RunnablePip runnablePip)
+        {
+            using (OnPipExecutionStarted(runnablePip))
+            {
+                var result = await PipExecutor.MaterializeInputsAsync(runnablePip.OperationContext, runnablePip.Environment, runnablePip.Pip);
+                return result;
+            }
+        }
+
+        /// <inheritdoc />
+        public override async Task<PipResultStatus> MaterializeOutputsAsync(RunnablePip runnablePip)
+        {
+            // Need to create separate operation context since there may be concurrent operations on representing executions on remote workers
+            using (var operationContext = runnablePip.OperationContext.StartAsyncOperation(OperationKind.PassThrough))
+            using (OnPipExecutionStarted(runnablePip, operationContext))
+            {
+                var cachingInfo = runnablePip.ExecutionResult?.TwoPhaseCachingInfo;
+
+                Task cachingInfoAvailableCompletion = Unit.VoidTask;
+
+
+                PipResultStatus result = await PipExecutor.MaterializeOutputsAsync(operationContext, runnablePip.Environment, runnablePip.Pip);
+
+
+                return result;
+            }
+        }
+
+        public override Task<ExecutionResult> ExecuteProcessAsync(ProcessRunnablePip processRunnable) => ExecuteProcessAsyncPipTorrent(processRunnable);
+
+        #region Any
+        public async Task<ExecutionResult> ExecuteProcessAsyncAny(ProcessRunnablePip processRunnable)
+        {
+            using (var scope = OnPipExecutionStarted(processRunnable))
+            {
+                CurrentlyExecutingPips.TryAdd(processRunnable.PipId, Unit.Void);
+
+                var process = processRunnable.Process;
+                var context = processRunnable.Environment.Context;
+
+                var processArguments = new ProcessArguments()
+                {
+                    Command = process.Executable.Path.ToString(context.PathTable),
+                    Args = process.Arguments.ToString(context.PathTable),
+                    CommandVirtualWorkingDir = process.WorkingDirectory.ToString(context.PathTable),
+                };
+
+                var effectiveVars = processRunnable.Environment.State.PipEnvironment.GetEffectiveEnvironmentVariables(context.PathTable, process);
+
+                // TODO: This does horrible unneeded allocations
+                foreach (var kv in effectiveVars.ToDictionary())
+                {
+                    processArguments.Environment.Add(kv.Key, kv.Value);
+                }
+
+                // TODO: Use pools to avoid allocating over and over and over, but then protobuff is way worse :)
+
+                // BuildXL has effecient flat list that we have to tree-ify. 
+                // Ideally we will do this on the server on-demand but for now we will have to waste tiem int he client.
+                var meta = new Dictionary<AbsolutePath, DirectoryMetadata>();
+                // Files can be listed multiple times (in multiple partial seal, or multiple shared opaques)
+                // To avoid duplicate work trackign which ones we added.
+                var handledFiles = new HashSet<AbsolutePath>();
+
+
+                var pipId = "Pip" + process.SemiStableHash.ToString("X", CultureInfo.InvariantCulture) + " (" + process.Executable.Path.GetName(context.PathTable).ToString(context.StringTable)+ ")";
+
+                Console.WriteLine($"Adding files: {pipId}");
+                foreach (var file in process.Dependencies)
+                {
+                    await AddFileAsync(context, file, meta, handledFiles);
+                }
+
+                Console.WriteLine($"Adding dirs: {pipId}");
+                foreach (var inputDirectory in process.DirectoryDependencies)
+                {
+                    // Sealed directories have multiple files in them, that the task may use. Preemptively send the files over
+                    foreach (var file in m_fileContentManager.ListSealedDirectoryContents(inputDirectory))
+                    {
+                        await AddFileAsync(context, file, meta, handledFiles);
+                    }
+                }
+
+                Console.WriteLine($"Hacking unneeded local IO: {pipId}");
+
+                // UGHHHHH: Have to do all directory stuff first LOCALLY :( This should all be server-side....
+                await PrepareUnneededLocalFiles(context, process, effectiveVars);
+                // END UGGHHHHH
+
+                Console.WriteLine($"Building dirstructure: {pipId}");
+
+                // Ensure all output directories are created
+                AddDirectory(context, process.WorkingDirectory, meta);
+                if (process.TempDirectory.IsValid)
+                {
+                    AddDirectory(context, process.TempDirectory, meta);
+                }
+
+                foreach (var fileOutput in process.FileOutputs)
+                {
+                    var folder = fileOutput.Path.GetParent(context.PathTable);
+
+                    AddDirectory(context, folder, meta);
+                }
+                foreach (var directoryOutput in process.DirectoryOutputs)
+                {
+                    AddDirectory(context, directoryOutput.Path, meta);
+                }
+                foreach (var tempDirectory in process.AdditionalTempDirectories)
+                {
+                    AddDirectory(context, tempDirectory, meta);
+                }
+
+
+                var expandedMetaData = meta.Values.ToList();
+                //expandedMetaData.Clear();
+
+                string stdIn = null;
+                if (process.StandardInputFile.IsValid)
+                {
+                    throw new InvalidOperationException("NOT SUPPORTED");
+                }
+                else if (process.StandardInputData.IsValid)
+                {
+                    stdIn = process.StandardInputData.ToString(context.PathTable);
+                }
+
+                Console.WriteLine($"Running command: {pipId}");
+
+                var buildResult = await m_client.RunCommandAsync(
+                    processArguments,
+                    predictedInitialDirectoryMetadata: expandedMetaData,
+                    Guid.NewGuid(),
+                    new AnyBuildProcessTelemetry(processArguments),
+                    c => Task.FromResult(1),
+                    stdIn,
+                    CancellationToken.None
+                );
+
+                var executionResult = ExecutionResult.CreateSealed(
+                    result: PipResultStatus.NotMaterialized, // TODO: Handle failure, but on success we don't want to pull down the files when not needed
+                    numberOfWarnings: 0,
+
+                    // TODO: Report the outputs
+                    outputContent: await ToOutputContent(buildResult, context),
+
+                    // TODO: Opaque directories
+                    directoryOutputs: ToDirectoryOutputs(buildResult, context),
+
+                    performanceInformation: new ProcessPipExecutionPerformance(
+                        level: PipExecutionLevel.Executed,
+                        executionStart: DateTime.UtcNow,
+                        executionStop: DateTime.UtcNow,
+                        fingerprint: Fingerprint.Random(),
+                        processExecutionTime: TimeSpan.Zero,
+                        fileMonitoringViolations: new FileMonitoringViolationCounters(0, 0, 0),
+                        ioCounters: new IOCounters(),
+                        userTime: TimeSpan.Zero,
+                        kernelTime: TimeSpan.Zero,
+                        peakMemoryUsage: 0,
+                        numberOfProcesses: 0,
+                        workerId: 0),
+                    fingerprint: null,
+                    fileAccessViolationsNotWhitelisted: new ReportedFileAccess[0],
+                    whitelistedFileAccessViolations: new ReportedFileAccess[0],
+                    mustBeConsideredPerpetuallyDirty: true,
+                    dynamicallyObservedFiles: ReadOnlyArray<AbsolutePath>.Empty,
+                    dynamicallyObservedEnumerations: ReadOnlyArray<AbsolutePath>.Empty,
+                    allowedUndeclaredSourceReads: CollectionUtilities.EmptySet<AbsolutePath>(),
+                    absentPathProbesUnderOutputDirectories: CollectionUtilities.EmptySet<AbsolutePath>(),
+                    twoPhaseCachingInfo: null,
+                    pipCacheDescriptorV2Metadata: null,
+                    converged: false,
+                    pathSet: null,
+                    cacheLookupStepDurations: null);
+                processRunnable.SetExecutionResult(executionResult);
+                return executionResult;
+            }
+        }
+
+        private async Task<ReadOnlyArray<(FileArtifact, FileMaterializationInfo, PipOutputOrigin)>> ToOutputContent(BuildResult buildResult, PipExecutionContext context)
+        {
+            // TODO: Consider maing outputFiles lists to avoid allocations
+            int nrOfFiles = buildResult.OutputFiles.Count();
+            var result = new (FileArtifact, FileMaterializationInfo, PipOutputOrigin)[nrOfFiles];
+
+            int i = 0;
+            foreach (var outFile in buildResult.OutputFiles)
+            {
+                var path = AbsolutePath.Create(context.PathTable, outFile.AbsolutePath);
+                // TODO: Figure out why the agent doesn't return the hash
+                // var contentHash = new ContentHash(HashType.Vso0, outFile.HashAsBytes);
+                // TODO: Async
+                var contentHash = await ContentHashingUtilities.HashFileAsync(outFile.AbsolutePath);
+
+                var fileMaterializationInfo = new FileMaterializationInfo(
+                    new FileContentInfo(contentHash, outFile.FileSize),
+                    path.GetName(context.PathTable)
+                );
+                // TODO: Handle rewrites...
+                var file = FileArtifact.CreateOutputFile(path);
+                result[i] = (
+                    file,
+                    fileMaterializationInfo,
+                    PipOutputOrigin.NotMaterialized
+                );
+
+                i++;
+            }
+
+            return ReadOnlyArray<(FileArtifact, FileMaterializationInfo, PipOutputOrigin)>.FromWithoutCopy(result);
+        }
+
+        private ReadOnlyArray<(DirectoryArtifact, ReadOnlyArray<FileArtifact>)> ToDirectoryOutputs(
+            BuildResult buildResult,
+            PipExecutionContext context)
+        {
+            // TODO: Opaque directories
+            return ReadOnlyArray<(DirectoryArtifact, ReadOnlyArray<FileArtifact>)>.Empty;
+        }
+
+        private async Task AddFileAsync(PipExecutionContext context, FileArtifact file, Dictionary<AbsolutePath, DirectoryMetadata> meta, HashSet<AbsolutePath> alreadyHandledFiles)
+        {
+            Contract.Requires(file.IsValid);
+
+            if (alreadyHandledFiles.Contains(file.Path))
+            {
+                return;
+            }
+
+            var parentMeta = AddDirectory(context, file.Path.GetParent(context.PathTable), meta);
+
+            ContentHash hash;
+
+            var filePath = file.Path.ToString(context.PathTable);
+            // TODO: This is horribly ineffecient and should be implemented as part of looking up the Hash so we only open up 
+            var fileInfo = new FileInfo(filePath);
+
+            if (m_fileContentManager.TryGetInputContent(file, out var fileMaterializationInfo))
+            {
+                var fileContentInfo = fileMaterializationInfo.FileContentInfo;
+
+                hash = fileContentInfo.Hash;
+
+                if (hash == WellKnownContentHashes.UntrackedFile)
+                {
+                    // TODO:  Depending on config files can be untracked, so we'll have to hash them if the engine doesn't want to track the hash based on config.
+                    hash = await ContentHashingUtilities.HashFileAsync(filePath);
+                    return;
+                }
+
+                // Filesize is already computed by the parent folder.
+                // TODO: Figure out discrepancies
+                // fileSize = fileContentInfo.Length;
+            }
+            else
+            {
+                // TODO: Figure out why filecontentinfo is not avaialble.
+                hash = await ContentHashingUtilities.HashFileAsync(filePath);
+
+                // Filesize is already computed by the parent folder.
+                // TODO: Figure out discrepancies
+                //fileSize = fileInfo.Length;
+            }
+
+            //parentMeta.Entries.Add(
+            //    new FileSystemEntry
+            //    {
+            //        RelativePath = file.Path.GetName(context.PathTable).ToString(context.StringTable),
+            //        IsDirectory = false,
+            //        FileHash = hash.ToHex(),
+            //        FileSize = fileSize,
+            //        CreatedUtcTicks = fileInfo.CreationTimeUtc.Ticks,
+            //        LastAccessedUtcTicks = fileInfo.LastAccessTimeUtc.Ticks,
+            //        LastModifiedUtcTicks = fileInfo.LastWriteTimeUtc.Ticks,
+            //    });
+
+            if (!hash.IsSpecialValue()) // AnyBuild agent doesn't handle absent files very well, so have to ommit those details.
+            {
+                // AnyBuild filesystem needs to be fully expanded so we have to 'PATCH" the entry that was created with the hash.
+                // TODO: Handle case sensitive filesystem
+                var fileName = file.Path.GetName(context.PathTable).ToString(context.StringTable);
+                foreach (var entry in parentMeta.Entries)
+                {
+                    if (string.Equals(entry.RelativePath, fileName, StringComparison.OrdinalIgnoreCase))
+                    {
+                        entry.FileHash = hash.ToAnyBuildCustomFormat();
+                    }
+                }
+
+                alreadyHandledFiles.Add(file.Path);
+            }
+        }
+
+        private DirectoryMetadata AddDirectory(PipExecutionContext context, AbsolutePath directory, Dictionary<AbsolutePath, DirectoryMetadata> meta)
+        {
+            Contract.Requires(directory.IsValid);
+            if (meta.TryGetValue(directory, out var result))
+            {
+                return result;
+            }
+
+            var parent = directory.GetParent(context.PathTable);
+            if (parent.IsValid)
+            {
+                //// Not the root of drive, so add directory entry in the parent tree
+                //var parentMeta = AddDirectory(context, parent, meta);
+
+                //// TODO: This is horribly ineffecient and should be implemented as part of looking up the Hash so we only open up 
+                //var directoryInfo = new DirectoryInfo(directory.ToString(context.PathTable));
+
+                //parentMeta.Entries.Add(
+                //    new FileSystemEntry
+                //    {
+                //        IsDirectory = true,
+                //        RelativePath = directory.GetName(context.PathTable).ToString(context.StringTable),
+                //        // TODO: Handle directory 
+                //        CreatedUtcTicks = directoryInfo.CreationTimeUtc.Ticks,
+                //        LastAccessedUtcTicks = directoryInfo.LastAccessTimeUtc.Ticks,
+                //        LastModifiedUtcTicks = directoryInfo.LastWriteTimeUtc.Ticks,
+                //    });
+
+                // AnyBuild directories have to be enumerated client side fully, not sparse based on inputs...
+                AddDirectory(context, parent, meta);
+
+
+            }
+
+            //result = new DirectoryMetadata
+            //         {
+            //             BasePath = directory.ToString(context.PathTable),
+            //             Exists = true,
+            //         };
+
+            // AnyBuild directories have to be enumerated client side fully, not sparse based on inputs...
+            result = DirectoryMetadataUtils.GetDirectoryMetadata(directory.ToString(context.PathTable));
+
+            meta.Add(directory, result);
+            return result;
+        }
+        #endregion
+
+        /// <inheritdoc />
+        public async Task<ExecutionResult> ExecuteProcessAsyncPipTorrent(ProcessRunnablePip processRunnable)
+        {
+            using (var scope = OnPipExecutionStarted(processRunnable))
+            {
+                CurrentlyExecutingPips.TryAdd(processRunnable.PipId, Unit.Void);
+
+                var context = new ProtobufSerializationContext(processRunnable.Environment.Context.PathTable);
+                var process = processRunnable.Process;
+                var processProto = Process.ToProto(context, processRunnable.Process);
+                var request = new BuildXL.Cloud.Proto.BuildRequest()
+                {
+                    Process = processProto,
+                };
+
+                foreach (var file in process.Dependencies)
+                {
+                    var hash = m_fileContentManager.GetInputContent(file).FileContentInfo.Hash;
+                    request.InputFiles.Add(file.Path.Value.Value, hash.ToByteString());
+                }
+
+                foreach (var inputDirectory in process.DirectoryDependencies)
+                {
+                    // Sealed directories have multiple files in them, that the task may use. Preemptively send the files over
+                    foreach (var file in m_fileContentManager.ListSealedDirectoryContents(inputDirectory))
+                    {
+                        // The sealed directories have dynamic files
+                        context.AddPath(file.Path);
+
+                        var hash = m_fileContentManager.GetInputContent(file).FileContentInfo.Hash;
+                        request.InputFiles.Add(file.Path.Value.Value, hash.ToByteString());
+                    }
+                }
+
+                request.PathTable = context.SendPathTable();
+
+
+                //Environment.SetEnvironmentVariable("GRPC_TRACE", "api");
+                //Environment.SetEnvironmentVariable("GRPC_VERBOSITY", "debug");
+                //Grpc.Core.GrpcEnvironment.SetLogger(new Grpc.Core.Logging.ConsoleLogger());
+
+                // The port number here must match the port of the gRPC server
+                var channel = new Channel(m_endPoints[0], 5000, ChannelCredentials.Insecure);
+                var options = new CallOptions()
+                {
+
+                };
+
+                var client = new BuildXL.Cloud.Proto.CloudWorkerService.CloudWorkerServiceClient(channel);
+                var reply = await client.RunProcessAsync(request, options);
+
+                CurrentlyExecutingPips.TryRemove(processRunnable.PipId, out _);
+
+                context.ReceivePathTable(reply.PathTable);
+
+                // TODO: Handle failure
+                // TODO: Pass perf stats
+
+                var executionResult = ExecutionResult.CreateSealed(
+                    result: PipResultStatus.NotMaterialized, // TODO: Handle failure, but on success we don't want to pull down the files when not needed
+                    numberOfWarnings: 0,
+
+                    outputContent: ToOutputContent(context, processRunnable.OperationContext, reply.OutputFile),
+                    directoryOutputs: ToDirectoryOutputs(context, reply.OutputDirectories),
+
+                    performanceInformation: new ProcessPipExecutionPerformance(
+                        level: PipExecutionLevel.Executed,
+                        executionStart: DateTime.UtcNow,
+                        executionStop: DateTime.UtcNow,
+                        fingerprint: Fingerprint.Random(),
+                        processExecutionTime: TimeSpan.Zero,
+                        fileMonitoringViolations: new FileMonitoringViolationCounters(0, 0, 0),
+                        ioCounters: new IOCounters(),
+                        userTime: TimeSpan.Zero,
+                        kernelTime: TimeSpan.Zero,
+                        peakMemoryUsage: 0,
+                        numberOfProcesses: 0,
+                        workerId: 0),
+                    fingerprint: null,
+                    fileAccessViolationsNotWhitelisted: new ReportedFileAccess[0],
+                    whitelistedFileAccessViolations: new ReportedFileAccess[0],
+                    mustBeConsideredPerpetuallyDirty: true,
+                    dynamicallyObservedFiles: ReadOnlyArray<AbsolutePath>.Empty,
+                    dynamicallyObservedEnumerations: ReadOnlyArray<AbsolutePath>.Empty,
+                    allowedUndeclaredSourceReads: CollectionUtilities.EmptySet<AbsolutePath>(),
+                    absentPathProbesUnderOutputDirectories: CollectionUtilities.EmptySet<AbsolutePath>(),
+                    twoPhaseCachingInfo: null,
+                    pipCacheDescriptorV2Metadata: null,
+                    converged: false,
+                    pathSet: null,
+                    cacheLookupStepDurations: null);
+                processRunnable.SetExecutionResult(executionResult);
+                return executionResult;
+            }
+        }
+
+        private ReadOnlyArray<(FileArtifact, FileMaterializationInfo, PipOutputOrigin)> ToOutputContent(ProtobufSerializationContext context, OperationContext operationContext, IList<BuildXL.Cloud.Proto.OutputFile> outFiles)
+        {
+            var result = new (FileArtifact, FileMaterializationInfo, PipOutputOrigin)[outFiles.Count];
+
+            for (int i = 0; i < outFiles.Count; i++)
+            {
+                var outFile = outFiles[i];
+
+                var file = context.FromProto(outFile.File);
+                // $TODO: DO proper effecient contenthash
+                var contentHash = outFile.ContentHash.ToContentHash();
+                var fileMaterializationInfo = new FileMaterializationInfo(
+                    new FileContentInfo(contentHash, outFile.Length),
+                    file.Path.GetName(context.PathTable)
+                );
+                result[i] = (
+                    file,
+                    fileMaterializationInfo,
+                    PipOutputOrigin.NotMaterialized
+                );
+
+                // Just pass through the hash
+                m_fileContentManager.ReportOutputContent(
+                    operationContext,
+                    "TODO: PipDescription",
+                    file,
+                    fileMaterializationInfo,
+                    PipOutputOrigin.NotMaterialized);
+            }
+
+            return ReadOnlyArray<(FileArtifact, FileMaterializationInfo, PipOutputOrigin)>.FromWithoutCopy(result);
+        }
+
+        private ReadOnlyArray<(DirectoryArtifact, ReadOnlyArray<FileArtifact>)> ToDirectoryOutputs(
+            ProtobufSerializationContext context,
+            IList<BuildXL.Cloud.Proto.OutputDirectory> outDirectories)
+        {
+            // TODO: Opaque directories
+            return ReadOnlyArray<(DirectoryArtifact, ReadOnlyArray<FileArtifact>)>.Empty;
+        }
+
+        /// <inheritdoc />
+        public override async Task<ExecutionResult> PostProcessAsync(ProcessRunnablePip runnablePip)
+        {
+            using (OnPipExecutionStarted(runnablePip))
+            {
+                var pipScope = runnablePip.Environment.State.GetScope(runnablePip.Process);
+                var cacheableProcess = runnablePip.CacheableProcess ?? pipScope.GetCacheableProcess(runnablePip.Process, runnablePip.Environment);
+
+                return await PipExecutor.PostProcessExecution(
+                    operationContext: runnablePip.OperationContext,
+                    environment: runnablePip.Environment,
+                    state: pipScope,
+                    cacheableProcess: cacheableProcess,
+                    processExecutionResult: runnablePip.ExecutionResult);
+            }
+        }
+
+        /// <inheritdoc />
+        public override void Start()
+        {
+            base.Start();
+        }
+
+        /// <inheritdoc />
+        public override void Initialize(PipGraph pipGraph, IExecutionLogTarget executionLogTarget)
+        {
+            base.Initialize(pipGraph, executionLogTarget);
+        }
+
+        /// <inheritdoc />
+        public override int WaitingBuildRequestsCount => base.WaitingBuildRequestsCount;
+
+
+        #region HackCopies From SandboxedPipExecutor
+        // This should not be here... The agent should be smarter in the virtualzation
+
+        private async Task PrepareUnneededLocalFiles(PipExecutionContext context, Process process, IBuildParameters effectiveVars)
+        {
+            await PrepareResponseFile(context, process);
+            PrepareTempDirectory(context, process, effectiveVars);
+            PrepareWorkingDirectory(context, process);
+            await PrepareOutputs(context, process);
+        }
+
+        private async Task<bool> PrepareResponseFile(PipExecutionContext context, Process process)
+        {
+            if (process.ResponseFile.IsValid)
+            {
+                Contract.Assume(process.ResponseFileData.IsValid, "ResponseFile path requires having ResponseFile data");
+                string destination = process.ResponseFile.Path.ToString(context.PathTable);
+                string contents = process.ResponseFileData.ToString(context.PathTable);
+
+                try
+                {
+                    string directoryName = ExceptionUtilities.HandleRecoverableIOException(
+                        () => Path.GetDirectoryName(destination),
+                        ex => { throw new BuildXLException("Cannot get directory name", ex); });
+
+                    PreparePathForOutputFile(context, process.ResponseFile.Path);
+                    FileUtilities.CreateDirectory(directoryName);
+
+                    // The target is always overwritten
+                    await FileUtilities.WriteAllTextAsync(destination, contents, Encoding.UTF8);
+                }
+                catch (BuildXLException ex)
+                {
+                    //Tracing.Logger.Log.PipProcessResponseFileCreationFailed(
+                    //    m_loggingContext,
+                    //    process.SemiStableHash,
+                    //    process.GetDescription(context),
+                    //    destination,
+                    //    ex.LogEventErrorCode,
+                    //    ex.LogEventMessage);
+
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        private void PreparePathForOutputFile(PipExecutionContext context, AbsolutePath filePath, HashSet<AbsolutePath> outputDirectories = null)
+        {
+            Contract.Requires(filePath.IsValid);
+
+            string expandedFilePath = filePath.ToString(context.PathTable);
+            var mayBeDeleted = FileUtilities.TryDeletePathIfExists(expandedFilePath, m_tempDirectoryCleaner);
+
+            if (!mayBeDeleted.Succeeded)
+            {
+                mayBeDeleted.Failure.Throw();
+            }
+
+            AbsolutePath parentDirectory = filePath.GetParent(context.PathTable);
+
+            if (outputDirectories == null || outputDirectories.Add(parentDirectory))
+            {
+                // Ensure parent directory exists.
+                FileUtilities.CreateDirectory(parentDirectory.ToString(context.PathTable));
+            }
+        }
+
+        private void PreparePathForOutputDirectory(PipExecutionContext context, AbsolutePath directoryPath, bool createIfNonExistent = false)
+        {
+            string expandedDirectoryPath = directoryPath.ToString(context.PathTable);
+            PreparePathForDirectory(expandedDirectoryPath, createIfNonExistent);
+        }
+
+        private void PreparePathForDirectory(string expandedDirectoryPath, bool createIfNonExistent)
+        {
+            bool exists = false;
+
+            if (FileUtilities.DirectoryExistsNoFollow(expandedDirectoryPath))
+            {
+                FileUtilities.DeleteDirectoryContents(expandedDirectoryPath, deleteRootDirectory: false, tempDirectoryCleaner: m_tempDirectoryCleaner);
+                exists = true;
+            }
+            else if (FileUtilities.FileExistsNoFollow(expandedDirectoryPath))
+            {
+                // We expect to produce a directory, but a file with the same name exists on disk.
+                FileUtilities.DeleteFile(expandedDirectoryPath, tempDirectoryCleaner: m_tempDirectoryCleaner);
+            }
+
+            if (!exists && createIfNonExistent)
+            {
+                FileUtilities.CreateDirectory(expandedDirectoryPath);
+            }
+        }
+
+        /// <summary>
+        /// Creates and cleans the Process's temp directory if necessary
+        /// </summary>
+        /// <param name="environmentVariables">Environment</param>
+        private bool PrepareTempDirectory(PipExecutionContext context, Process process, BuildParameters.IBuildParameters environmentVariables)
+        {
+            Contract.Requires(environmentVariables != null);
+
+            string path = null;
+
+            // If specified, clean the pip specific temp directory.
+            if (process.TempDirectory.IsValid)
+            {
+                if (!CleanTempDirectory(context, process.TempDirectory))
+                {
+                    return false;
+                }
+
+                //Contract.Assert(m_fileAccessManifest != null);
+
+                //// Allow creation of symlinks in temp directories.
+                //m_fileAccessManifest.AddScope(process.TempDirectory, values: FileAccessPolicy.AllowSymlinkCreation, mask: m_excludeReportAccessMask);
+            }
+
+            // Clean all specified temp directories.
+            foreach (var additionalTempDirectory in process.AdditionalTempDirectories)
+            {
+                if (!CleanTempDirectory(context, additionalTempDirectory))
+                {
+                    return false;
+                }
+
+                //Contract.Assert(m_fileAccessManifest != null);
+
+                //// Allow creation of symlinks in temp directories.
+                //m_fileAccessManifest.AddScope(additionalTempDirectory, mask: m_excludeReportAccessMask, values: FileAccessPolicy.AllowSymlinkCreation);
+            }
+
+            try
+            {
+                // Many things get angry if temp directories don't exist so ensure they're created regardless of
+                // what they're set to.
+                // TODO:Bug 75124 - should validate these paths
+                foreach (var tmpEnvVar in DisallowedTempVariables)
+                {
+                    path = environmentVariables[tmpEnvVar];
+                    FileUtilities.CreateDirectory(path);
+                }
+            }
+            catch (BuildXLException ex)
+            {
+                //Tracing.Logger.Log.PipTempDirectorySetupError(m_loggingContext, path, ex.Message);
+                return false;
+            }
+
+            return true;
+        }
+
+        private bool CleanTempDirectory(PipExecutionContext context, AbsolutePath tempDirectoryPath)
+        {
+            Contract.Requires(tempDirectoryPath.IsValid);
+
+            string path = tempDirectoryPath.ToString(context.PathTable);
+
+            //if (path.Length > s_maxTempDirectoryLength)
+            //{
+            //    LogTempDirectoryTooLong(path);
+            //}
+
+            try
+            {
+                // Temp directories are lazily, best effort cleaned after the pip finished. The previous build may not
+                // have finished this work before exiting so we must double check.
+                PreparePathForOutputDirectory(context, tempDirectoryPath);
+            }
+            catch (BuildXLException ex)
+            {
+                //Tracing.Logger.Log.PipTempDirectoryCleanupError(
+                //    m_loggingContext,
+                //    m_pip.SemiStableHash,
+                //    m_pip.GetDescription(m_context),
+                //    path,
+                //    ex.LogEventMessage);
+
+                return false;
+            }
+
+            return true;
+        }
+        
+        private bool PrepareWorkingDirectory(PipExecutionContext context, Process process)
+        {
+            //if (m_semanticPathExpander == null || IsInvalidOrWritable(m_semanticPathExpander.GetSemanticPathInfo(m_pip.WorkingDirectory)))
+            {
+                var workingDirectoryPath = process.WorkingDirectory.ToString(context.PathTable);
+                try
+                {
+                    FileUtilities.CreateDirectory(workingDirectoryPath);
+                }
+                catch (BuildXLException ex)
+                {
+                    //LogOutputPreparationFailed(workingDirectoryPath, ex);
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        /// <summary>
+        /// Each output of this process is either written (output only) or rewritten (input and output).
+        /// We delete written outputs (shouldn't be observed) and re-deploy rewritten outputs (should be a private copy).
+        /// Rewritten outputs may be initially non-private and so not writable, i.e., hardlinked to other locations.
+        /// Note that this function is also responsible for stamping private outputs such that the tool sees
+        /// <see cref="WellKnownTimestamps.OldOutputTimestamp"/>.
+        /// </summary>
+        private async Task<bool> PrepareOutputs(PipExecutionContext context, Process process)
+        {
+            if (!PrepareDirectoryOutputs(context, process))
+            {
+                return false;
+            }
+
+            //if (!PrepareInContainerPaths())
+            //{
+            //    return false;
+            //}
+
+            using (var dependenciesWrapper = Pools.GetAbsolutePathSet())
+            using (var outputDirectoriesWrapper = Pools.GetAbsolutePathSet())
+            {
+                var dependencies = dependenciesWrapper.Instance;
+
+                foreach (FileArtifact dependency in process.Dependencies)
+                {
+                    dependencies.Add(dependency.Path);
+                }
+
+                var outputDirectories = outputDirectoriesWrapper.Instance;
+
+                foreach (FileArtifactWithAttributes output in process.FileOutputs)
+                {
+                    // Only subset of all outputs should be deleted, because some times we may want a tool to see its prior outputs
+                    if (!output.DeleteBeforeRun())
+                    {
+                        continue;
+                    }
+
+                    try
+                    {
+                        if (!dependencies.Contains(output.Path))
+                        {
+                            //if (m_shouldPreserveOutputs)
+                            //{
+                            //    Contract.Assume(m_makeOutputPrivate != null);
+
+                            //    // A process may be configured to allow its prior outputs to be seen by future
+                            //    // invocations. In this case we must make sure the outputs are no longer hardlinked to
+                            //    // the cache to allow them to be writeable.
+                            //    if (!await m_makeOutputPrivate(output.ToFileArtifact()))
+                            //    {
+                            //        // Delete the file if it exists.
+                            //        PreparePathForOutputFile(output.Path, outputDirectories);
+                            //    }
+                            //}
+                            //else
+                            {
+                                // Delete the file, since we aren't re-writing it. Note that we do not use System.IO.File.Delete here,
+                                // since we need to be tolerant to several exotic cases:
+                                // - A previous run of the tool may have written a file and marked it as readonly.
+                                // - There may be concurrent users of the file being deleted, but via other hardlinks:
+                                // This DeleteFile tries several strategies relevant to those circumstances.
+                                PreparePathForOutputFile(context, output.Path, outputDirectories);
+                            }
+                        }
+                        else
+                        {
+                            Contract.Assume(output.RewriteCount > 0);
+                            var inputVersionOfOutput = new FileArtifact(output.Path, output.RewriteCount - 1);
+#if DEBUG
+                            Contract.Assume(process.Dependencies.Contains(inputVersionOfOutput), "Each rewrite increments the rewrite count by one");
+#endif
+
+                            //if (m_makeInputPrivate != null)
+                            //{
+                            //    if (!await m_makeInputPrivate(inputVersionOfOutput))
+                            //    {
+                            //        throw new BuildXLException("Failed to create a private, writable copy of the file so that it could be re-written.");
+                            //    }
+                            //}
+
+                            try
+                            {
+                                FileUtilities.SetFileTimestamps(
+                                    output.Path.ToString(context.PathTable),
+                                    new FileTimestamps(WellKnownTimestamps.OldOutputTimestamp));
+                            }
+                            catch (Exception ex)
+                            {
+                                throw new BuildXLException("Failed to open an output file for writing (it was just made writable and private to be written by a process).", ex);
+                            }
+                        }
+                    }
+                    catch (BuildXLException ex)
+                    {
+                        //LogOutputPreparationFailed(output.Path.ToString(m_pathTable), ex);
+                        return false;
+                    }
+                }
+            }
+
+            return true;
+        }
+
+        private bool PrepareDirectoryOutputs(PipExecutionContext context, Process process)
+        {
+            foreach (var directoryOutput in process.DirectoryOutputs)
+            {
+                try
+                {
+                    if (!directoryOutput.IsSharedOpaque)
+                    {
+                        PreparePathForOutputDirectory(context, directoryOutput.Path, createIfNonExistent: true);
+                    }
+                    else
+                    {
+                        // Ensure it exists.
+                        string directoryPath = directoryOutput.Path.ToString(context.PathTable);
+
+                        if (!FileUtilities.DirectoryExistsNoFollow(directoryPath))
+                        {
+                            FileUtilities.CreateDirectory(directoryPath);
+                        }
+                    }
+                }
+                catch (BuildXLException ex)
+                {
+                    //LogOutputPreparationFailed(directoryOutput.Path.ToString(m_pathTable), ex);
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+       
+        public static readonly IReadOnlyList<string> DisallowedTempVariables = OperatingSystemHelper.IsUnixOS
+            ? new[] { "TEMP", "TMP", "TMPDIR" }
+            : new[] { "TEMP", "TMP" };
+
+        #endregion
+    }
+
+
+}
+#endif

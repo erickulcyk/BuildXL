@@ -5,7 +5,9 @@ using System;
 using System.Diagnostics.CodeAnalysis;
 using System.Diagnostics.ContractsLight;
 using BuildXL.Pips.Operations;
+using BuildXL.Pips.Proto;
 using BuildXL.Utilities;
+using PipData = BuildXL.Pips.Operations.PipData;
 
 namespace BuildXL.Pips
 {
@@ -112,6 +114,26 @@ namespace BuildXL.Pips
             PipData data = PipData.Deserialize(reader);
 
             return new StandardInput(file, data);
+        }
+        #endregion
+
+
+        #region ProtoBuf Serialization
+
+        public static Proto.StandardInput ToProto(ProtobufSerializationContext context, StandardInput obj)
+        {
+            return new Proto.StandardInput
+                   {
+                       File = context.ToProto(obj.File),
+                       Data = PipData.ToProto(context, obj.Data),
+                   };
+        }
+
+        public static StandardInput FromProto(ProtobufSerializationContext context, Proto.StandardInput standardInput)
+        {
+            return new StandardInput(
+                context.FromProto(standardInput.File),
+                PipData.FromProto(context, standardInput.Data));
         }
         #endregion
 

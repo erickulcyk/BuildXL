@@ -177,6 +177,11 @@ namespace BuildXL.Utilities.Configuration
         bool? InCloudBuild { get; }
 
         /// <summary>
+        /// blaat
+        /// </summary>
+        IReadOnlyList<string> AgentEndPoint { get; }
+
+        /// <summary>
         /// Default configuration parameters for front-end resolvers.
         /// </summary>
         IResolverDefaults ResolverDefaults { get; }

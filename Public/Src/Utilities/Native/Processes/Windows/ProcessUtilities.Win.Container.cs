@@ -248,7 +248,13 @@ namespace BuildXL.Native.Processes.Windows
 
                 if (hresult != 0)
                 {
-                    throw new NativeWin32Exception(Marshal.GetLastWin32Error(), I($"Unable to setup the Bind filter from '{sourcePath}' to '{targetPath}'."));
+                    var win32Error = Marshal.GetLastWin32Error();
+                    if (win32Error == 0)
+                    {
+                        throw new NativeWin32Exception(win32Error, I($"Unable to setup the Bind filter from '{sourcePath}' to '{targetPath}'. -- || {Marshal.GetExceptionForHR(hresult).Message}|| "));
+                    }
+
+                    throw new NativeWin32Exception(win32Error, I($"Unable to setup the Bind filter from '{sourcePath}' to '{targetPath}'."));
                 }
             }
         }

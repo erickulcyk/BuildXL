@@ -1,6 +1,7 @@
 // Copyright (c) Microsoft. All rights reserved.
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
+using System;
 using System.Diagnostics.CodeAnalysis;
 using System.Diagnostics.ContractsLight;
 using BuildXL.Utilities;
@@ -157,6 +158,31 @@ namespace BuildXL.Pips.Operations
                 token,
                 qualifierId,
                 usage);
+        }
+
+        #endregion
+
+        #region ProtoBuf Serialization
+
+        internal static PipProvenance FromProto(ProtobufSerializationContext context, Proto.PipProvenance provenance)
+        {
+            // TODO
+            return new PipProvenance(
+                new System.Random().Next(),
+                ModuleId.Invalid,
+                StringId.Invalid,
+                FullSymbol.Invalid,
+                LocationData.Invalid,
+                QualifierId.Unqualified,
+                PipData.Invalid);
+        }
+
+        internal static Proto.PipProvenance ToProto(ProtobufSerializationContext context, PipProvenance provenance)
+        {
+            // TODO
+            return new Proto.PipProvenance()
+                   {
+                   };
         }
 
         #endregion

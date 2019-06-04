@@ -243,6 +243,8 @@ namespace BuildXL.Scheduler
         /// </summary>
         public LocalWorker LocalWorker { get; }
 
+        private CloudWorker m_cloudWorker;
+
         /// <summary>
         /// Available workers count
         /// </summary>
@@ -333,7 +335,7 @@ namespace BuildXL.Scheduler
 
             ExecutionLog?.WorkerList(new WorkerListEventData { Workers = m_workers.SelectArray(w => w.Name) });
         }
-
+        
         private readonly object m_workerStatusLock = new object();
         private OperationContext m_workersStatusOperation;
 
@@ -1147,6 +1149,7 @@ namespace BuildXL.Scheduler
             }
 
             LocalWorker = new LocalWorker(m_scheduleConfiguration.MaxProcesses, m_scheduleConfiguration.MaxCacheLookup);
+
             m_workers = new List<Worker> { LocalWorker };
 
             m_statusSnapshotLastUpdated = DateTime.UtcNow;
@@ -1268,14 +1271,25 @@ namespace BuildXL.Scheduler
             m_executePhaseLoggingContext = loggingContext;
             m_serviceManager.Start(loggingContext, OperationTracker);
             m_apiServer?.Start(loggingContext);
+
+            if (m_configuration.AgentEndPoint.Count > 0)
+            {
+                m_cloudWorker = new CloudWorker(
+                    workerId: 1,
+                    name: "CLoudWorker",
+                    m_configuration.AgentEndPoint,
+                    fileContentManager: m_fileContentManager,
+                    tempCleaner: m_tempCleaner);
+            }
+
             m_chooseWorkerCpu = new ChooseWorkerCpu(
                 loggingContext, 
                 m_configuration.Schedule.MaxChooseWorkerCpu, 
                 m_workers,
+                m_cloudWorker,
                 m_pipQueue, 
                 PipGraph, 
                 m_fileContentManager);
-
             m_chooseWorkerCacheLookup = new ChooseWorkerCacheLookup(
                 loggingContext, 
                 m_configuration.Schedule.MaxChooseWorkerCacheLookup, 

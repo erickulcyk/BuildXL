@@ -223,6 +223,14 @@ namespace BuildXL.Cache.ContentStore.Hashing
         }
 
         /// <summary>
+        ///  Hack in an attempt to make AnyBuild happy. AnyBuild should really just support the proper serialization and ContentHash everywhere rather than a hacked string.
+        /// </summary>
+        public string ToAnyBuildCustomFormat()
+        {
+            return HexUtilities.BytesToHex(_bytes.ToByteArray());
+        }
+
+        /// <summary>
         ///     Serialize to a string.
         /// </summary>
         public string Serialize()
@@ -394,6 +402,11 @@ namespace BuildXL.Cache.ContentStore.Hashing
             }
 
             return true;
+        }
+
+        public string ToAnyBuildHex()
+        {
+            throw new NotImplementedException();
         }
     }
 }

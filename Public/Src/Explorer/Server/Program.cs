@@ -16,6 +16,7 @@ namespace BuildXL.Explorer.Server
             {
                 Debugger.Launch();
             }
+
             CreateWebHostBuilder(args).Build().Run();
         }
 

@@ -5,6 +5,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics.ContractsLight;
 using BuildXL.Ipc.Interfaces;
+using BuildXL.Pips.Proto;
 using BuildXL.Utilities;
 
 namespace BuildXL.Pips.Operations

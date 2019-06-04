@@ -4,7 +4,7 @@
 import {Artifact, Cmd, Transformer} from "Sdk.Transformers";
 
 export const cmdTool: Transformer.ToolDefinition = {
-    exe: f`${Environment.getPathValue("COMSPEC")}`,
+    exe: f`cmd.exe`,
     dependsOnWindowsDirectories: true,
 };
 

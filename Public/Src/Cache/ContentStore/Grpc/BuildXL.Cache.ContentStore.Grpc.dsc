@@ -16,8 +16,8 @@ namespace Grpc {
                 NetFx.System.IO.dll
             ),
             
-            importFrom("Grpc.Core").pkg,
             importFrom("Google.Protobuf").pkg,
+            importFrom("Grpc.Core").pkg,
             importFrom("System.Interactive.Async").pkg,
         ],
         tools: {

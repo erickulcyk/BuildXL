@@ -1,0 +1,35 @@
+syntax = "proto3";
+
+package BuildXL.Pips.Proto;
+
+import "PipData.proto";
+
+message PipBase {
+    uint32 id = 1;
+    PipType pipType = 2;
+    repeated string tags = 3;
+    PipProvenance Provenance = 4;
+}
+
+enum PipType {
+    // TODO: Protobuff naming of enums is global :( have to suffix all entries with type to guarantee uniqueness.
+    // Figure out a better wary
+    InvalidType = 0;
+    ProcessType = 1;
+}
+
+message PipProvenance {
+    PipData usage = 1;
+    LocationData token = 2;
+    string outputValueSymbol = 3;
+    int32 qualifierId = 4;
+    int32 moduleId = 5;
+    string moduleName = 6;
+    int64 semiStableHash = 7;
+}
+
+message LocationData {
+    int32 pathId = 1;
+    int32 line = 2;
+    int32 position = 3;
+}

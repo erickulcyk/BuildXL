@@ -5,6 +5,7 @@ using System;
 using System.Diagnostics.CodeAnalysis;
 using System.Diagnostics.ContractsLight;
 using System.Linq;
+using BuildXL.Pips.Proto;
 using BuildXL.Utilities;
 using BuildXL.Utilities.Collections;
 using BuildXL.Utilities.Configuration;
@@ -723,7 +724,7 @@ namespace BuildXL.Pips.Operations
             pipUniqueOutputHash = -1;
 
             AbsolutePath outputPath;
-            int rewriteCount = -1;  
+            int rewriteCount = -1;
             // Arbitrarily use file outputs before directory outputs
             if (FileOutputs.IsValid && FileOutputs.Length > 0)
             {
@@ -851,5 +852,112 @@ namespace BuildXL.Pips.Operations
             writer.Write(PreserveOutputWhitelist, (w, v) => w.Write(v));
         }
         #endregion
+
+        #region ProtoBufSerialization 
+        public static Proto.Process ToProto(ProtobufSerializationContext context, Process obj)
+        {
+            var result = new Proto.Process()
+            {
+                Base = Pip.ToProtoBase(context, obj),
+                ProcessOptions = (int)obj.ProcessOptions,
+                AbsentPathProbeInUndeclaredOpaquesMode = (Proto.AbsentPathProbeInUndeclaredOpaquesMode)(int)obj.ProcessAbsentPathProbeInUndeclaredOpaquesMode,
+                StandardInput = StandardInput.ToProto(context, obj.StandardInput),
+                StandardOutput = context.ToProto(obj.StandardOutput),
+                StandardError = context.ToProto(obj.StandardError),
+                StandardDirectory = context.ToProto(obj.StandardDirectory),
+                UniqueOutputDirectory = context.ToProto(obj.UniqueOutputDirectory),
+                UniqueRedirectedDirectoryRoot = context.ToProto(obj.UniqueRedirectedDirectoryRoot),
+                ResponseFile = context.ToProto(obj.ResponseFile),
+                ResponseFileData = PipData.ToProto(context, obj.ResponseFileData),
+                Executable = context.ToProto(obj.Executable),
+                ToolDescription = context.ToProto(obj.ToolDescription),
+                WorkingDirectory = context.ToProto(obj.WorkingDirectory),
+                Arguments = PipData.ToProto(context, obj.Arguments),
+                WarningTimeout = context.ToProto(obj.WarningTimeout),
+                Timeout = context.ToProto(obj.Timeout),
+
+                //string warningRegex = 28;
+                //string rrrorRegex = 29;
+                //int32 tempDirectory = 33;
+                ////ServiceInfo serviceInfo = 35;
+                //int32 weight = 36;
+                //bool testRetries = 37;
+            };
+
+            result.EnvironmentVariables.AddRange(obj.EnvironmentVariables.Select(env => EnvironmentVariable.ToProto(context, env)));
+            result.Dependencies.AddRange(obj.Dependencies.Select(context.ToProto));
+            result.DirectoryDependencies.AddRange(obj.DirectoryDependencies.Select(context.ToProto));
+            result.OrderDependencies.AddRange(obj.OrderDependencies.Select(dep => dep.Value));
+            result.UntrackedPaths.AddRange(obj.UntrackedPaths.Select(context.ToProto));
+            result.UntrackedScopes.AddRange(obj.UntrackedScopes.Select(context.ToProto));
+            result.SuccessExitCodes.AddRange(obj.SuccessExitCodes);
+            result.RetryExitCodes.AddRange(obj.RetryExitCodes);
+
+            result.FileOutputs.AddRange(obj.FileOutputs.Select(f => context.ToProto(f)));
+            result.DirectoryOutputs.AddRange(obj.DirectoryOutputs.Select(d => context.ToProto(d)));
+            //repeated ProcessSemaphoreInfo semaphores = 32;
+            //repeated int32 additionalTempDirectories = 34;
+
+            return result;
+        }
+
+        public static Process FromProto(ProtobufSerializationContext context, Proto.Process proto)
+        {
+
+            var test = context.FromProto(proto.UntrackedScopes, p => context.PathFromProto(p));
+
+            var process = new Process(
+                executable: context.FromProto(proto.Executable),
+                workingDirectory: context.PathFromProto(proto.WorkingDirectory),
+                arguments: PipData.FromProto(context, proto.Arguments),
+                responseFile: context.FromProto(proto.ResponseFile),
+                responseFileData: PipData.FromProto(context, proto.ResponseFileData),
+
+                environmentVariables: context.FromProto(proto.EnvironmentVariables, protoEnv => EnvironmentVariable.FromProto(context, protoEnv)),
+                standardInput: StandardInput.FromProto(context, proto.StandardInput),
+                standardOutput: context.FromProto(proto.StandardOutput),
+                standardError: context.FromProto(proto.StandardError),
+                standardDirectory: context.PathFromProto(proto.StandardDirectory),
+
+                dependencies: context.FromProto(proto.Dependencies, f => context.FromProto(f)),
+                directoryDependencies: context.FromProto(proto.DirectoryDependencies, d => context.FromProto(d)),
+                orderDependencies: ReadOnlyArray<PipId>.Empty, // TODO: There is no code setting this yet.
+
+                outputs: context.FromProto(proto.FileOutputs, f => context.FromProto(f)),
+                directoryOutputs: context.FromProto(proto.DirectoryOutputs, f => context.FromProto(f)),
+
+                tempDirectory: context.PathFromProto(proto.TempDirectory),
+                additionalTempDirectories: context.FromProto(proto.AdditionalTempDirectories, p => context.PathFromProto(p)),
+                untrackedPaths: context.FromProto(proto.UntrackedPaths, p => context.PathFromProto(p)),
+                untrackedScopes: context.FromProto(proto.UntrackedScopes, p => context.PathFromProto(p)),
+
+                tags: context.FromProto(proto.Base.Tags, tag => context.FromProto(tag)),
+                provenance: PipProvenance.FromProto(context, proto.Base.Provenance),
+                toolDescription: context.FromProto(proto.ToolDescription),
+
+                successExitCodes: context.FromProto(proto.SuccessExitCodes),
+                retryExitCodes: context.FromProto(proto.RetryExitCodes),
+                semaphores: ReadOnlyArray<ProcessSemaphoreInfo>.Empty, // TODO
+                warningTimeout: context.TimeSpanFromProto(proto.WarningTimeout),
+                timeout: context.TimeSpanFromProto(proto.Timeout),
+                warningRegex: RegexDescriptor.CreateDefaultForWarnings(context.PathTable.StringTable), // TODO
+                errorRegex: RegexDescriptor.CreateDefaultForErrors(context.PathTable.StringTable) // TODO
+
+                //uniqueOutputDirectory: proto.DefaultDirectory,
+                //uniqueRedirectedDirectoryRoot: proto.RedirectedDirectoryRoot,
+                //options: proto.Options,
+                //serviceInfo: proto.serviceInfo,
+                //allowedSurvivingChildProcessNames: proto.AllowedSurvivingChildProcessNames,
+                //nestedProcessTerminationTimeout: proto.NestedProcessTerminationTimeout,
+                //doubleWritePolicy: proto.DoubleWritePolicy,
+                //containerIsolationLevel: proto.ContainerIsolationLevel,
+                //absentPathProbeMode: proto.AbsentPathProbeUnderOpaquesMode,
+                //weight: proto.Weight
+            );
+
+            return process;
+        }
+        #endregion
     }
 }
+

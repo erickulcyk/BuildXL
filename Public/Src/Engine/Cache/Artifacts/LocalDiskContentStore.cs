@@ -59,6 +59,8 @@ namespace BuildXL.Engine.Cache.Artifacts
         private readonly SemaphoreSlim m_hashingSemaphore = new SemaphoreSlim(EngineEnvironmentSettings.HashingConcurrency);
         private readonly LoggingContext m_loggingContext;
 
+        public FileContentTable FileContentTable => m_fileContentTable;
+
         /// <summary>
         /// Creates a store which tracks files and content with the provided <paramref name="fileContentTable"/> and <paramref name="fileChangeTracker"/>.
         /// The change tracker is allowed to fail each tracking operation, so long as it can record that tracking is incomplete (<see cref="FileChangeTracker.CreateDisabledTracker"/> is sufficient).

@@ -1,0 +1,60 @@
+﻿syntax = "proto3";
+
+package BuildXL.Cloud.Proto;
+
+// Defines limmited version of content server. When content server support is turned on we can swtich
+service ContentServer {
+    
+    rpc PinBulk(PinBulkRequest) returns (PinBulkResponse) {}
+
+    rpc StoreFile(stream StoreFileRequest) returns (StoreFileResponse) {}
+}
+
+// Headers
+message RequestHeader {
+    int32 SessionId = 1;
+    string TraceId = 2;
+}
+
+// Common
+message PinBulkResponse {
+    map<int32, ResponseHeader> Header = 1;
+}
+
+message ContentHashAndHashTypeData {
+    int32 HashType = 1;
+    bytes ContentHash = 2;
+}
+
+message ResponseHeader {
+    bool Succeeded = 1;
+    int32 Result = 2;
+    string ErrorMessage = 3;
+    string Diagnostics = 4;
+    int64 ServerReceiptTimeUtcTicks = 5;
+}
+
+// PinBulk
+message PinBulkRequest {
+    RequestHeader Header = 1;
+    repeated ContentHashAndHashTypeData Hashes = 2;
+}
+
+// StoreFile
+message StoreFileRequest {
+    RequestHeader Header = 1;
+    int32 HashType = 2;
+    bytes ContentHash = 3;
+    string Path = 4;
+
+    Chunk FileContent = 5;
+}
+
+message Chunk {
+    int32 ChunkId = 1;
+    bytes Content = 2;
+}
+
+message StoreFileResponse {
+    ResponseHeader Header = 1;
+}

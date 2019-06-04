@@ -28,7 +28,6 @@ namespace BuildXL.Scheduler.Distribution
             IPipQueue pipQueue) : base(loggingContext, workers, pipQueue, DispatcherKind.ChooseWorkerCacheLookup, maxParallelDegree)
         {
             m_distributeCacheLookups = distributeCacheLookups;
-
         }
 
         /// <summary>

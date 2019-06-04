@@ -20,6 +20,7 @@ using BuildXL.Utilities.Collections;
 using BuildXL.Utilities.Instrumentation.Common;
 using BuildXL.Utilities.Tasks;
 using BuildXL.Utilities.Tracing;
+using JetBrains.Annotations;
 
 namespace BuildXL.Scheduler.Distribution
 {
@@ -86,14 +87,18 @@ namespace BuildXL.Scheduler.Distribution
 
         private int m_totalProcessSlots;
 
+        private readonly CloudWorker m_cloudWorker;
+
         public ChooseWorkerCpu(
             LoggingContext loggingContext,
             int maxParallelDegree,
             IReadOnlyList<Worker> workers,
+            [CanBeNull]CloudWorker cloudWorker,
             IPipQueue pipQueue,
             PipGraph pipGraph,
             FileContentManager fileContentManager) : base(loggingContext, workers, pipQueue, DispatcherKind.ChooseWorkerCpu, maxParallelDegree)
         {
+            m_cloudWorker = cloudWorker;
             m_pipTable = pipGraph.PipTable;
             m_executedProcessOutputs = new ContentTrackingSet(pipGraph);
             m_fileContentManager = fileContentManager;
@@ -170,7 +175,16 @@ namespace BuildXL.Scheduler.Distribution
             if (MustRunOnMaster(runnablePip))
             {
                 // This is shortcut for the single-machine builds and distributed workers.
-                return LocalWorker.TryAcquire(runnablePip, out limitingResource, loadFactor: MaxLoadFactor) ? LocalWorker : null;
+
+                if (m_cloudWorker != null && runnablePip.PipType == PipType.Process)
+                {
+                    limitingResource = null;
+                    return m_cloudWorker;
+                }
+                else
+                {
+                    return LocalWorker.TryAcquire(runnablePip, out limitingResource, loadFactor: MaxLoadFactor) ? LocalWorker : null;
+                }
             }
 
             ResetStatus();
