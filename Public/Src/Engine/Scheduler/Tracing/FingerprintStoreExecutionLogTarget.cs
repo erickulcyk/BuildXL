@@ -544,6 +544,11 @@ namespace BuildXL.Scheduler.Tracing
             }
         }
 
+        public CacheMissStats? RetrieveCacheMissSummary(PipId pipId)
+        {
+            return RuntimeCacheMissAnalyzer?.RetrieveCacheMissSummary(pipId);
+        }
+
         /// <summary>
         /// Checks if an entry for the pip with the same fingerprints already exists in the store.
         /// </summary>

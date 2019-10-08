@@ -244,15 +244,24 @@ namespace BuildXL.Engine.Cache.Serialization
         /// Diffs two <see cref="JsonNode"/> trees.
         /// </summary>
         /// <returns>
-        /// A JSON string representation of the diff.
+        /// A JSON representation of the diff.
         /// </returns>
-        public static string PrintTreeDiff(JsonNode rootA, JsonNode rootB)
+        public static JToken GetTreeDiff(JsonNode rootA, JsonNode rootB)
         {
             var jsonA = Serialize(rootA);
             var jsonB = Serialize(rootB);
 
-            var diff = s_jdp.Diff(JToken.Parse(jsonA), JToken.Parse(jsonB));
+            return s_jdp.Diff(JToken.Parse(jsonA), JToken.Parse(jsonB));
+        }
 
+        /// <summary>
+        /// Diffs two <see cref="JsonNode"/> trees.
+        /// </summary>
+        /// <returns>
+        /// A JSON string representation of the diff.
+        /// </returns>
+        public static string PrintTreeDiff(JToken diff)
+        {
             return diff == null ? string.Empty : diff.ToString();
         }
 
