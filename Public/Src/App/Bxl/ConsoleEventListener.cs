@@ -432,6 +432,12 @@ namespace BuildXL
         {
             Interlocked.Increment(ref m_errorsLogged);
 
+            // AzureDevOpsListener has alreday written the event to console, avoid duplication
+            if (m_optimizeForAzureDevOps)
+            {
+                return;
+            }
+            
             if (eventData.EventId == (int)EventId.PipProcessError)
             {
                 // Try to be a bit fancy and only show the tool errors in red. The pip name and log file will stay in
@@ -461,6 +467,12 @@ namespace BuildXL
         /// <inheritdoc />
         protected override void OnWarning(EventWrittenEventArgs eventData)
         {
+            // AzureDevOpsListener has alreday write the event to console, avoid duplication
+            if (m_optimizeForAzureDevOps)
+            {
+                return;
+            }
+
             if (eventData.EventId == (int)EventId.PipProcessWarning)
             {
                 string warnings = (string)eventData.Payload[5];
@@ -533,23 +545,7 @@ namespace BuildXL
         /// <inheritdoc />
         protected override void Output(EventLevel level, int id, string eventName, EventKeywords eventKeywords, string text, bool doNotTranslatePaths = false)
         {
-            var outputText = text.TrimEnd(s_newLineCharArray);
-
-            if (m_optimizeForAzureDevOps)
-            {
-                switch (level)
-                {
-                    case EventLevel.Critical:
-                    case EventLevel.Error:
-                    outputText = "##[error]" + outputText.Replace("\n", "\n##[error]");
-                    break;
-                    case EventLevel.Warning:
-                    outputText = "##[warning]" + outputText.Replace("\n", "\n##[warning]");
-                    break;
-                }
-            }
-
-            m_console.WriteOutputLine(ConvertLevel(level), outputText);
+            m_console.WriteOutputLine(ConvertLevel(level), text.TrimEnd(s_newLineCharArray));
         }
 
         private void OutputUpdatable(EventLevel level, string standardText, string updatableText, bool onlyIfOverwriteIsSupported)

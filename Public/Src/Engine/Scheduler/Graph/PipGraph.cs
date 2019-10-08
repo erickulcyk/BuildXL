@@ -595,6 +595,22 @@ namespace BuildXL.Scheduler.Graph
         }
 
         /// <summary>
+        /// Returns pips consuming given directory artifact.
+        /// </summary>
+        public IEnumerable<Pip> GetConsumingPips(DirectoryArtifact dir)
+        {
+            var producer = GetProducer(dir);
+            var potentialConsumers = HydratePips(
+                DataflowGraph.GetOutgoingEdges(producer.ToNodeId()).Cast<Edge>().Select(edge => edge.OtherNode), 
+                PipQueryContext.PipGraphGetConsumingPips);
+
+            return potentialConsumers
+                .Where(pip =>
+                    (pip is Process proc && proc.DirectoryDependencies.Contains(dir)) ||
+                    (pip is SealDirectory sd && sd.Directory == dir));
+        }
+
+        /// <summary>
         /// Get the list of pips that consume a given file artifact
         /// </summary>
         /// <param name="filePath">The consumed file path</param>
@@ -1004,7 +1020,7 @@ namespace BuildXL.Scheduler.Graph
         /// <summary>
         /// Applies the filter to each node in the build graph.
         /// </summary>
-        internal bool FilterNodesToBuild(LoggingContext loggingContext, RootFilter filter, out RangedNodeSet filteredIn, bool canonicalizeFilter)
+        internal bool FilterNodesToBuild(LoggingContext loggingContext, RootFilter filter, out RangedNodeSet filteredIn)
         {
             Contract.Ensures(Contract.ValueAtReturn(out filteredIn) != null);
 
@@ -1025,7 +1041,7 @@ namespace BuildXL.Scheduler.Graph
                     "Builds with an empty filter should not actually perform filtering. Instead their pips should be added to the schedule with an initial state of Waiting. "
                     + "Or in the case of a cached graph, all pips should be scheduled without going through the overhead of filtering.");
 
-                var outputs = FilterOutputs(filter, canonicalizeFilter);
+                var outputs = FilterOutputs(filter);
 
                 int addAttempts = 0;
 
@@ -1225,9 +1241,9 @@ namespace BuildXL.Scheduler.Graph
         /// <summary>
         /// Gets filtered outputs appropriate for a clean operation
         /// </summary>
-        internal IReadOnlyList<FileOrDirectoryArtifact> FilterOutputsForClean(RootFilter filter, bool canonicalizeFilter = true)
+        internal IReadOnlyList<FileOrDirectoryArtifact> FilterOutputsForClean(RootFilter filter)
         {
-            var outputs = FilterOutputs(filter, canonicalizeFilter);
+            var outputs = FilterOutputs(filter);
 
             List<FileOrDirectoryArtifact> outputsForDeletion = new List<FileOrDirectoryArtifact>(outputs.Count);
             foreach (var output in outputs)
@@ -1273,7 +1289,7 @@ namespace BuildXL.Scheduler.Graph
             }
 
             var context = new PipFilterContext(this);
-            var pipFilter = canonicalizeFilter ? filter.PipFilter.Canonicalize(new FilterCanonicalizer()) : filter.PipFilter;
+            var pipFilter = filter.PipFilter;
             return pipFilter.FilterOutputs(context);
         }
 

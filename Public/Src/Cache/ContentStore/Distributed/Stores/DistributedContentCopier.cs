@@ -232,7 +232,7 @@ namespace BuildXL.Cache.ContentStore.Distributed.Stores
         /// <summary>
         /// Requests another machine to copy from the current machine.
         /// </summary>
-        public Task<BoolResult> RequestCopyFileAsync(OperationContext context, ContentHash hash, MachineLocation targetLocation)
+        public Task<BoolResult> RequestCopyFileAsync(OperationContext context, ContentHash hash, MachineLocation targetLocation, bool isInsideRing)
         {
             return _proactiveCopyIoGate.GatedOperationAsync(ts =>
                 {
@@ -248,6 +248,7 @@ namespace BuildXL.Cache.ContentStore.Distributed.Stores
                         extraEndMessage: result =>
                             $"ContentHash={hash.ToShortString()} " +
                             $"TargetLocation=[{targetLocation}] " +
+                            $"InsideRing={isInsideRing} " +
                             $"IOGate.OccupiedCount={_settings.MaxConcurrentProactiveCopyOperations - _proactiveCopyIoGate.CurrentCount} " +
                             $"IOGate.Wait={ts.TotalMilliseconds}ms." +
                             $"Timeout={_timeoutForPoractiveCopies}" +
@@ -276,8 +277,10 @@ namespace BuildXL.Cache.ContentStore.Distributed.Stores
             badContentLocations.Clear();
             string lastErrorMessage = null;
 
-            foreach (MachineLocation location in hashInfo.Locations)
+            for (int replicaIndex = 0; replicaIndex < hashInfo.Locations.Count; replicaIndex++)
             {
+                var location = hashInfo.Locations[replicaIndex];
+
                 // if the file is explicitly reported missing by the remote, don't bother retrying.
                 if (missingContentLocations.Contains(location))
                 {
@@ -330,6 +333,7 @@ namespace BuildXL.Cache.ContentStore.Distributed.Stores
                                 $"from=[{sourcePath}] " +
                                 $"size=[{result.Size ?? hashInfo.Size}] " +
                                 $"trusted={_settings.UseTrustedHash} " +
+                                (result.Succeeded ? $"attempt={attemptCount} replica={replicaIndex} " : string.Empty) +
                                 (result.TimeSpentHashing.HasValue ? $"timeSpentHashing={result.TimeSpentHashing.Value.TotalMilliseconds}ms " : string.Empty) +
                                 $"IOGate.OccupiedCount={_settings.MaxConcurrentCopyOperations - _ioGate.CurrentCount} " +
                                 $"IOGate.Wait={ts.TotalMilliseconds}ms.",
@@ -511,7 +515,7 @@ namespace BuildXL.Cache.ContentStore.Distributed.Stores
                     using (Stream possiblyRecordingStream = _contentLocationStore.AreBlobsSupported && hashInfo.Size <= _contentLocationStore.MaxBlobSize && hashInfo.Size >= 0 ? (Stream)new RecordingStream(fileStream, hashInfo.Size) : fileStream)
                     using (HashingStream hashingStream = ContentHashers.Get(hashInfo.ContentHash.HashType).CreateWriteHashingStream(possiblyRecordingStream, hashEntireFileConcurrently ? 1 : _settings.ParallelHashingFileSizeBoundary))
                     {
-                        var copyFileResult = await _remoteFileCopier.CopyToAsync(location, hashingStream, hashInfo.Size, cts);
+                        var copyFileResult = await _remoteFileCopier.CopyToWithOperationContextAsync(new OperationContext(context, cts), location, hashingStream, hashInfo.Size);
                         copyFileResult.TimeSpentHashing = hashingStream.TimeSpentHashing;
 
                         if (copyFileResult.Succeeded)

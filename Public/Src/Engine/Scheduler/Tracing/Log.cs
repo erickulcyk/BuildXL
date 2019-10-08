@@ -2451,7 +2451,7 @@ namespace BuildXL.Scheduler.Tracing
             Keywords = (int)Keywords.UserMessage,
             EventTask = (int)Tasks.Scheduler,
             Message =
-                "Static fingerprint of {pipDescription} is '{staticFingerprint}':\r\n{fingerprintText}.")]
+                "Static fingerprint of '{pipDescription}' is '{staticFingerprint}':\r\n{fingerprintText}.")]
         public abstract void PipStaticFingerprint(LoggingContext context, string pipDescription, string staticFingerprint, string fingerprintText);
 
         [GeneratedEvent(
@@ -3916,8 +3916,8 @@ namespace BuildXL.Scheduler.Tracing
             EventLevel = Level.Verbose,
             Keywords = (int)Keywords.UserMessage,
             EventTask = (ushort)Tasks.Scheduler,
-            Message = "[{ShortProductName} API Server] Operation GetSealedDirectoryContent('{directory}') executed.")]
-        internal abstract void ApiServerGetSealedDirectoryContentExecuted(LoggingContext loggingContext, string directory);
+            Message = "[{ShortProductName} API Server] Operation GetSealedDirectoryContent('{directory}') executed (files: {filesCount}).")]
+        internal abstract void ApiServerGetSealedDirectoryContentExecuted(LoggingContext loggingContext, string directory, int filesCount);
 
         [GeneratedEvent(
             (ushort)LogEventId.UnexpectedlySmallObservedInputCount,
@@ -4504,8 +4504,8 @@ namespace BuildXL.Scheduler.Tracing
             EventLevel = Level.Error,
             Keywords = (int)Keywords.UserMessage,
             EventTask = (ushort)Tasks.PipInputAssertions,
-            Message = "Source dependency for file at path: {filePath} could not be hashed while processing pip.")]
-        public abstract void PipSourceDependencyCannotBeHashed(LoggingContext context, string filePath);
+            Message = "Source dependency for file at path: {filePath} could not be hashed while processing pip: {pipDescription}.")]
+        public abstract void PipSourceDependencyCannotBeHashed(LoggingContext context, string filePath, string pipDescription);
     }
 }
 #pragma warning restore CA1823 // Unused field
