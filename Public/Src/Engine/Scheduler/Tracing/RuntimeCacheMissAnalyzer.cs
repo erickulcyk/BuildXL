@@ -120,6 +120,8 @@ namespace BuildXL.Scheduler.Tracing
         /// </summary>
         private readonly ConcurrentDictionary<PipId, PipCacheMissInfo> m_pipCacheMissesDict;
 
+        private ConcurrentDictionary<PipId, CacheMissStats> m_finishedCacheMissAnalisys;
+
         /// <summary>
         /// A previous build's <see cref="FingerprintStore"/> that can be used for cache miss comparison.
         /// This may also be a snapshot of the current build's main <see cref="FingerprintStore"/> at the beginning of the build.
@@ -142,11 +144,19 @@ namespace BuildXL.Scheduler.Tracing
             m_changedPips = new VisitationTracker(graph);
             m_pipCacheMissesDict = new ConcurrentDictionary<PipId, PipCacheMissInfo>();
             m_runnablePipPerformance = runnablePipPerformance;
+            m_finishedCacheMissAnalisys = new ConcurrentDictionary<PipId, CacheMissStats>();
         }
 
         internal void AddCacheMiss(PipCacheMissInfo cacheMissInfo)
         {
             m_pipCacheMissesDict.Add(cacheMissInfo.PipId, cacheMissInfo);
+        }
+
+        internal CacheMissStats RetrieveCacheMissSummary(PipId pip)
+        {
+            CacheMissStats stats;
+            m_finishedCacheMissAnalisys.TryRemove(pip, out stats);
+            return stats;
         }
 
         internal void AnalyzeForCacheLookup(FingerprintStoreEntry newEntry, Process pip)
@@ -195,11 +205,12 @@ namespace BuildXL.Scheduler.Tracing
                 using (var pool = Pools.StringBuilderPool.GetInstance())
                 using (var writer = new StringWriter(pool.Instance))
                 {
-                    CacheMissAnalysisUtilities.AnalyzeCacheMiss(
+                    var cacheMissResults = CacheMissAnalysisUtilities.AnalyzeCacheMiss(
                         writer,
                         missInfo,
                         () => new FingerprintStoreReader.PipRecordingSession(PreviousFingerprintStore, oldEntry),
                         () => new FingerprintStoreReader.PipRecordingSession(m_logTarget.ExecutionFingerprintStore, newEntry));
+                    m_finishedCacheMissAnalisys[pip.PipId] = new CacheMissStats { Pip = pip.PipId, CacheMissResult = cacheMissResults.Item1, Summary = cacheMissResults.Item2 };
 
                     // The diff sometimes contains several empty new lines at the end.
                     var reason = writer.ToString().TrimEnd(Environment.NewLine.ToCharArray());

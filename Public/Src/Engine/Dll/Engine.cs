@@ -2952,7 +2952,7 @@ namespace BuildXL.Engine
         private void MakeScheduleInfoAvailableToViewer(EngineSchedule engineSchedule)
         {
             var scheduler = engineSchedule.Scheduler;
-            m_buildViewModel.SetSchedulerDetails(scheduler.RetrieveExecutingProcessPips);
+            m_buildViewModel.SetSchedulerDetails(scheduler.RetrieveExecutingProcessPips, scheduler.RetrieveChangeImpactTimes);
         }
 
         private void WarnForVirusScan(LoggingContext loggingContext, ILayoutConfiguration layout)

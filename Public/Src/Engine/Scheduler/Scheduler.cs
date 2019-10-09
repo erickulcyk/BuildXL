@@ -376,7 +376,7 @@ namespace BuildXL.Scheduler
                 // If only local worker is available, then the multiplier would be 1.
                 // If there is one available remote worker, then the multiplier would be 0.5; meaning that
                 //  the local worker will do the half work.
-                cpuMultiplier = (double) 1 / availableWorkersCount;
+                cpuMultiplier = (double)1 / availableWorkersCount;
             }
 
             if (m_scheduleConfiguration.MasterCacheLookupMultiplier.HasValue)
@@ -385,7 +385,7 @@ namespace BuildXL.Scheduler
             }
             else
             {
-                cacheLookupMultiplier = (double) 1 / availableWorkersCount;
+                cacheLookupMultiplier = (double)1 / availableWorkersCount;
             }
 
             int newProcessSlots = (int)(targetProcessSlots * cpuMultiplier);
@@ -2479,7 +2479,7 @@ namespace BuildXL.Scheduler
                     if (result.Status.IndicatesExecution() && !pipType.IsMetaPip())
                     {
                         Contract.Assert(result.PerformanceInfo != null);
-                        HandleExecutionPerformance(runnablePip, result.PerformanceInfo);
+                        HandleExecutionPerformance(runnablePip, result);
 
                         if (pipType == PipType.Process)
                         {
@@ -2729,34 +2729,34 @@ namespace BuildXL.Scheduler
                 case PipResultStatus.DeployedFromCache:
                 case PipResultStatus.UpToDate:
                 case PipResultStatus.NotMaterialized:
-                    // These results describe output materialization state and
-                    // can also occur for pips run on distributed workers since the outputs are
-                    // not produced on this machine. Distinguish using flag on runnable process indicating
-                    // execution
-                    if (runnableProcess.Executed)
-                    {
-                        Interlocked.Increment(ref m_numProcessPipsUnsatisfiedFromCache);
-                        m_groupedPipCounters.IncrementCounter(runnableProcess.Process, PipCountersByGroup.CacheMiss);
-                    }
-                    else
-                    {
-                        Interlocked.Increment(ref m_numProcessPipsSatisfiedFromCache);
-                        m_groupedPipCounters.IncrementCounter(runnableProcess.Process, PipCountersByGroup.CacheHit);
-                    }
+                // These results describe output materialization state and
+                // can also occur for pips run on distributed workers since the outputs are
+                // not produced on this machine. Distinguish using flag on runnable process indicating
+                // execution
+                if (runnableProcess.Executed)
+                {
+                    Interlocked.Increment(ref m_numProcessPipsUnsatisfiedFromCache);
+                    m_groupedPipCounters.IncrementCounter(runnableProcess.Process, PipCountersByGroup.CacheMiss);
+                }
+                else
+                {
+                    Interlocked.Increment(ref m_numProcessPipsSatisfiedFromCache);
+                    m_groupedPipCounters.IncrementCounter(runnableProcess.Process, PipCountersByGroup.CacheHit);
+                }
 
-                    break;
+                break;
                 case PipResultStatus.Failed:
                 case PipResultStatus.Succeeded:
                 case PipResultStatus.Canceled:
-                    Interlocked.Increment(ref m_numProcessPipsUnsatisfiedFromCache);
-                    m_groupedPipCounters.IncrementCounter(runnableProcess.Process, PipCountersByGroup.CacheMiss);
-                    break;
+                Interlocked.Increment(ref m_numProcessPipsUnsatisfiedFromCache);
+                m_groupedPipCounters.IncrementCounter(runnableProcess.Process, PipCountersByGroup.CacheMiss);
+                break;
                 case PipResultStatus.Skipped:
-                    Interlocked.Increment(ref m_numProcessPipsSkipped);
-                    m_groupedPipCounters.IncrementCounter(runnableProcess.Process, PipCountersByGroup.Skipped);
-                    break;
+                Interlocked.Increment(ref m_numProcessPipsSkipped);
+                m_groupedPipCounters.IncrementCounter(runnableProcess.Process, PipCountersByGroup.Skipped);
+                break;
                 default:
-                    throw Contract.AssertFailure("PipResult case not handled");
+                throw Contract.AssertFailure("PipResult case not handled");
             }
         }
 
@@ -3091,46 +3091,46 @@ namespace BuildXL.Scheduler
             switch (runnablePip.Step)
             {
                 case PipExecutionStep.Start:
-                    switch (runnablePip.PipType)
+                switch (runnablePip.PipType)
+                {
+                    case PipType.SpecFile:
+                    case PipType.Module:
+                    case PipType.Value:
+                    case PipType.SealDirectory:
+                    // These are fast to execute. They are inlined when they are scheduled during draining.
+                    // However, if the queue has not been started draining, we should add them to the queue.
+                    // SchedulePip is called as a part of 'schedule' phase.
+                    // That's why, we should not inline executions of fast pips when the queue is not draining.
+                    return m_pipQueue.IsDraining ? DispatcherKind.None : DispatcherKind.CPU;
+
+                    case PipType.WriteFile:
+                    case PipType.CopyFile:
+                    case PipType.Ipc:
+                    return DispatcherKind.IO;
+
+                    case PipType.Process:
+                    var state = (ProcessMutablePipState)m_pipTable.GetMutable(runnablePip.PipId);
+                    if (state.IsStartOrShutdown)
                     {
-                        case PipType.SpecFile:
-                        case PipType.Module:
-                        case PipType.Value:
-                        case PipType.SealDirectory:
-                            // These are fast to execute. They are inlined when they are scheduled during draining.
-                            // However, if the queue has not been started draining, we should add them to the queue.
-                            // SchedulePip is called as a part of 'schedule' phase.
-                            // That's why, we should not inline executions of fast pips when the queue is not draining.
-                            return m_pipQueue.IsDraining ? DispatcherKind.None : DispatcherKind.CPU;
-
-                        case PipType.WriteFile:
-                        case PipType.CopyFile:
-                        case PipType.Ipc:
-                            return DispatcherKind.IO;
-
-                        case PipType.Process:
-                            var state = (ProcessMutablePipState)m_pipTable.GetMutable(runnablePip.PipId);
-                            if (state.IsStartOrShutdown)
-                            {
-                                // service start and shutdown pips are noop, so they will be inlined if the queue is draining.
-                                return m_pipQueue.IsDraining ? DispatcherKind.None : DispatcherKind.CPU;
-                            }
-
-                            return DispatcherKind.IO;
-
-                        default:
-                            throw Contract.AssertFailure(I($"Invalid pip type: '{runnablePip.PipType}'"));
+                        // service start and shutdown pips are noop, so they will be inlined if the queue is draining.
+                        return m_pipQueue.IsDraining ? DispatcherKind.None : DispatcherKind.CPU;
                     }
 
+                    return DispatcherKind.IO;
+
+                    default:
+                    throw Contract.AssertFailure(I($"Invalid pip type: '{runnablePip.PipType}'"));
+                }
+
                 case PipExecutionStep.ChooseWorkerCacheLookup:
-                    // First attempt should be inlined; if it does not acquire a worker, then it should be enqueued to ChooseWorkerCacheLookup queue.
-                    return AnyRemoteWorkers && runnablePip.IsWaitingForWorker ? DispatcherKind.ChooseWorkerCacheLookup : DispatcherKind.None;
+                // First attempt should be inlined; if it does not acquire a worker, then it should be enqueued to ChooseWorkerCacheLookup queue.
+                return AnyRemoteWorkers && runnablePip.IsWaitingForWorker ? DispatcherKind.ChooseWorkerCacheLookup : DispatcherKind.None;
 
                 case PipExecutionStep.CacheLookup:
-                    return DispatcherKind.CacheLookup;
+                return DispatcherKind.CacheLookup;
 
                 case PipExecutionStep.ChooseWorkerCpu:
-                    return DispatcherKind.ChooseWorkerCpu;
+                return DispatcherKind.ChooseWorkerCpu;
 
                 case PipExecutionStep.MaterializeInputs:
                     if (runnablePip.PipType == PipType.Ipc)
@@ -3143,11 +3143,11 @@ namespace BuildXL.Scheduler
                     return DispatcherKind.Materialize;
                 case PipExecutionStep.MaterializeOutputs:
                 case PipExecutionStep.PostProcess:
-                    return DispatcherKind.Materialize;
+                return DispatcherKind.Materialize;
 
                 case PipExecutionStep.ExecuteProcess:
                 case PipExecutionStep.ExecuteNonProcessPip:
-                    return GetExecutionDispatcherKind(runnablePip);
+                return GetExecutionDispatcherKind(runnablePip);
 
                 // INEXPENSIVE STEPS
                 case PipExecutionStep.CheckIncrementalSkip:
@@ -3157,11 +3157,11 @@ namespace BuildXL.Scheduler
                 case PipExecutionStep.HandleResult:
                 case PipExecutionStep.None:
                 case PipExecutionStep.Done:
-                    // Do not change the current queue and inline execution.
-                    return DispatcherKind.None;
+                // Do not change the current queue and inline execution.
+                return DispatcherKind.None;
 
                 default:
-                    throw Contract.AssertFailure(I($"Invalid pip execution step: '{runnablePip.Step}'"));
+                throw Contract.AssertFailure(I($"Invalid pip execution step: '{runnablePip.Step}'"));
             }
         }
 
@@ -3171,22 +3171,22 @@ namespace BuildXL.Scheduler
             {
                 case PipType.WriteFile:
                 case PipType.CopyFile:
-                    return DispatcherKind.IO;
+                return DispatcherKind.IO;
 
                 case PipType.Process:
-                    return IsLightProcess(pip) ? DispatcherKind.Light : DispatcherKind.CPU;
+                return IsLightProcess(pip) ? DispatcherKind.Light : DispatcherKind.CPU;
 
                 case PipType.Ipc:
-                    return DispatcherKind.Light;
+                return DispatcherKind.Light;
 
                 case PipType.Value:
                 case PipType.SpecFile:
                 case PipType.Module:
                 case PipType.SealDirectory:
-                    return DispatcherKind.None;
+                return DispatcherKind.None;
 
                 default:
-                    throw Contract.AssertFailure(I($"Invalid pip type: '{pip.PipType}'"));
+                throw Contract.AssertFailure(I($"Invalid pip type: '{pip.PipType}'"));
             }
         }
 
@@ -3226,503 +3226,503 @@ namespace BuildXL.Scheduler
             switch (step)
             {
                 case PipExecutionStep.Start:
+                {
+                    var state = TryStartPip(runnablePip);
+                    if (state == PipState.Skipped)
                     {
-                        var state = TryStartPip(runnablePip);
-                        if (state == PipState.Skipped)
-                        {
-                            return PipExecutionStep.SkipDueToFailedDependencies;
-                        }
-
-                        if (state == PipState.Running)
-                        {
-                            if (pipType.IsMetaPip())
-                            {
-                                return PipExecutionStep.ExecuteNonProcessPip;
-                            }
-
-                            using (operationContext.StartOperation(PipExecutorCounter.HashSourceFileDependenciesDuration))
-                            {
-                                // Hash source file dependencies
-                                var maybeHashed = await fileContentManager.TryHashSourceDependenciesAsync(runnablePip.Pip, operationContext);
-                                if (!maybeHashed.Succeeded)
-                                {
-                                    Logger.Log.PipFailedDueToSourceDependenciesCannotBeHashed(
-                                        loggingContext,
-                                        runnablePip.Description);
-                                    return runnablePip.SetPipResult(PipResultStatus.Failed);
-                                }
-                            }
-
-                            switch (pipType)
-                            {
-                                case PipType.Process:
-                                    if (processRunnable.Process.IsStartOrShutdownKind)
-                                    {
-                                        // Service start and shutdown pips are noop in the scheduler.
-                                        // They will be run on demand by the service manager which is not tracked directly by the scheduler.
-                                        return runnablePip.SetPipResult(PipResult.CreateWithPointPerformanceInfo(PipResultStatus.Succeeded));
-                                    }
-
-                                    break;
-                                case PipType.Ipc:
-                                    // Ensure IPC pips take priority over process pips when choosing worker
-                                    // NOTE: Since they don't require slots they would not be able to block
-                                    // processes from acquiring a worker
-                                    runnablePip.ChangePriority(IpcPipChooseWorkerPriority);
-
-                                    // IPC pips go to ChooseWorker before checking the incremental state
-                                    return PipExecutionStep.ChooseWorkerCpu;
-                            }
-
-                            return PipExecutionStep.CheckIncrementalSkip; // CopyFile, WriteFile, Process, SealDirectory pips
-                        }
-
-                        throw Contract.AssertFailure(I($"Cannot start pip in state: {state}"));
+                        return PipExecutionStep.SkipDueToFailedDependencies;
                     }
 
-                case PipExecutionStep.Cancel:
+                    if (state == PipState.Running)
                     {
-                        // Make sure shared opaque outputs are flagged as such.
-                        FlagSharedOpaqueOutputsOnCancellation(runnablePip);
-
-                        Logger.Log.ScheduleCancelingPipSinceScheduleIsTerminating(
-                            loggingContext,
-                            runnablePip.Description);
-                        return runnablePip.SetPipResult(PipResult.CreateWithPointPerformanceInfo(PipResultStatus.Canceled));
-                    }
-
-                case PipExecutionStep.SkipDueToFailedDependencies:
-                    {
-                        // We report skipped pips when all dependencies (failed or otherwise) complete.
-                        // This has the side-effect that stack depth is bounded when a pip fails; ReportSkippedPip
-                        // reports failure which is then handled in OnPipCompleted as part of the normal queue processing
-                        // (rather than recursively abandoning dependents here).
-                        LogEventWithPipProvenance(runnablePip, Logger.Log.SchedulePipFailedDueToFailedPrerequisite);
-                        return runnablePip.SetPipResult(PipResult.Skipped);
-                    }
-
-                case PipExecutionStep.MaterializeOutputs:
-                    {
-                        PipResultStatus materializationResult = await worker.MaterializeOutputsAsync(runnablePip);
-
-                        var nextStep = processRunnable?.ExecutionResult != null
-                            ? processRunnable.SetPipResult(processRunnable.ExecutionResult.CloneSealedWithResult(materializationResult))
-                            : runnablePip.SetPipResult(materializationResult);
-
-                        if (!MaterializeOutputsInBackground)
+                        if (pipType.IsMetaPip())
                         {
-                            return nextStep;
+                            return PipExecutionStep.ExecuteNonProcessPip;
                         }
 
-                        if (materializationResult.IndicatesFailure())
+                        using (operationContext.StartOperation(PipExecutorCounter.HashSourceFileDependenciesDuration))
                         {
-                            m_hasFailures = true;
-                        }
-                        else
-                        {
-                            IncrementalSchedulingState?.PendingUpdates.MarkNodeMaterialized(runnablePip.PipId.ToNodeId());
-                            Logger.Log.PipIsMarkedMaterialized(loggingContext, runnablePip.Description);
-                        }
-
-                        return PipExecutionStep.Done;
-                    }
-
-                case PipExecutionStep.CheckIncrementalSkip:
-                    {
-                        // Enable incremental scheduling when distributed build role is none, and
-                        // dirty build is not used (forceSkipDependencies is false).
-                        if (IsPipCleanMaterialized(pipId))
-                        {
-                            var maybeHashed = await fileContentManager.TryHashOutputsAsync(runnablePip.Pip, operationContext);
+                            // Hash source file dependencies
+                            var maybeHashed = await fileContentManager.TryHashSourceDependenciesAsync(runnablePip.Pip, operationContext);
                             if (!maybeHashed.Succeeded)
                             {
-                                if (maybeHashed.Failure is CancellationFailure)
-                                {
-                                    Contract.Assert(loggingContext.ErrorWasLogged);
-                                }
-                                else
-                                {
-                                    Logger.Log.PipFailedDueToOutputsCannotBeHashed(
-                                        loggingContext,
-                                        runnablePip.Description);
-                                }
-                            }
-                            else
-                            {
-                                PipExecutionCounters.IncrementCounter(PipExecutorCounter.IncrementalSkipPipDueToCleanMaterialized);
-
-                                if (runnablePip.Pip.PipType == PipType.Process)
-                                {
-                                    PipExecutionCounters.IncrementCounter(PipExecutorCounter.IncrementalSkipProcessDueToCleanMaterialized);
-                                }
-
-                                Logger.Log.PipIsIncrementallySkippedDueToCleanMaterialized(loggingContext, runnablePip.Description);
-                            }
-
-                            return runnablePip.SetPipResult(PipResult.Create(
-                                maybeHashed.Succeeded ? PipResultStatus.UpToDate : PipResultStatus.Failed,
-                                runnablePip.StartTime));
-                        }
-
-                        if (m_scheduleConfiguration.ForceSkipDependencies != ForceSkipDependenciesMode.Disabled && m_mustExecuteNodesForDirtyBuild != null)
-                        {
-                            if (!m_mustExecuteNodesForDirtyBuild.Contains(pipId.ToNodeId()))
-                            {
-                                // When dirty build is enabled, we skip the scheduled pips whose outputs are present and are in the transitive dependency chain
-                                // The skipped ones during execution are not explicitly scheduled pips at all.
-                                return runnablePip.SetPipResult(PipResult.Create(
-                                    PipResultStatus.UpToDate,
-                                    runnablePip.StartTime));
-                            }
-
-                            using (PipExecutionCounters.StartStopwatch(PipExecutorCounter.HashProcessDependenciesDuration))
-                            {
-                                // The dependencies may have been skipped, so hash the processes inputs
-                                var maybeHashed = await fileContentManager.TryHashDependenciesAsync(runnablePip.Pip, operationContext);
-                                if (!maybeHashed.Succeeded)
-                                {
-                                    if (!(maybeHashed.Failure is CancellationFailure))
-                                    {
-                                        Logger.Log.PipFailedDueToDependenciesCannotBeHashed(
-                                            loggingContext,
-                                            runnablePip.Description);
-                                    }
-
-                                    return runnablePip.SetPipResult(PipResultStatus.Failed);
-                                }
+                                Logger.Log.PipFailedDueToSourceDependenciesCannotBeHashed(
+                                    loggingContext,
+                                    runnablePip.Description);
+                                return runnablePip.SetPipResult(PipResultStatus.Failed);
                             }
                         }
 
-                        return pipType == PipType.Process ? PipExecutionStep.ChooseWorkerCacheLookup : PipExecutionStep.ExecuteNonProcessPip;
-                    }
-
-                case PipExecutionStep.ChooseWorkerCacheLookup:
-                    {
-                        Contract.Assert(pipType == PipType.Process);
-                        Contract.Assert(worker == null);
-
-                        worker = await m_chooseWorkerCacheLookup.ChooseWorkerAsync(runnablePip);
-                        if (worker == null)
+                        switch (pipType)
                         {
-                            // If none of the workers is available, enqueue again.
-                            // We always want to choose a worker for the highest priority item. That's why, we enqueue again
-                            return PipExecutionStep.ChooseWorkerCacheLookup;
-                        }
+                            case PipType.Process:
+                            if (processRunnable.Process.IsStartOrShutdownKind)
+                            {
+                                // Service start and shutdown pips are noop in the scheduler.
+                                // They will be run on demand by the service manager which is not tracked directly by the scheduler.
+                                return runnablePip.SetPipResult(PipResult.CreateWithPointPerformanceInfo(PipResultStatus.Succeeded));
+                            }
 
-                        worker.Transition(runnablePip.PipId, WorkerPipState.ChosenForCacheLookup);
-                        runnablePip.SetWorker(worker);
+                            break;
+                            case PipType.Ipc:
+                            // Ensure IPC pips take priority over process pips when choosing worker
+                            // NOTE: Since they don't require slots they would not be able to block
+                            // processes from acquiring a worker
+                            runnablePip.ChangePriority(IpcPipChooseWorkerPriority);
 
-                        return PipExecutionStep.CacheLookup;
-                    }
-
-                case PipExecutionStep.ChooseWorkerCpu:
-                    {
-                        Contract.Assert(pipType == PipType.Process || pipType == PipType.Ipc);
-                        Contract.Assert(worker == null);
-
-                        worker = await ChooseWorkerCpuAsync(runnablePip);
-                        if (worker == null)
-                        {
-                            // If none of the workers is available, enqueue again.
-                            // We always want to choose a worker for the highest priority item. That's why, we enqueue again
+                            // IPC pips go to ChooseWorker before checking the incremental state
                             return PipExecutionStep.ChooseWorkerCpu;
                         }
 
-                        worker.Transition(runnablePip.PipId, WorkerPipState.ChosenForExecution);
-                        runnablePip.SetWorker(worker);
-                        if (InputsLazilyMaterialized)
-                        {
-                            // Materialize inputs if lazy materialization is enabled or this is a distributed build
-                            return PipExecutionStep.MaterializeInputs;
-                        }
-
-                        if (pipType == PipType.Process)
-                        {
-                            return PipExecutionStep.ExecuteProcess;
-                        }
-
-                        Contract.Assert(pipType == PipType.Ipc);
-                        return PipExecutionStep.ExecuteNonProcessPip;
+                        return PipExecutionStep.CheckIncrementalSkip; // CopyFile, WriteFile, Process, SealDirectory pips
                     }
 
-                case PipExecutionStep.MaterializeInputs:
+                    throw Contract.AssertFailure(I($"Cannot start pip in state: {state}"));
+                }
+
+                case PipExecutionStep.Cancel:
+                {
+                    // Make sure shared opaque outputs are flagged as such.
+                    FlagSharedOpaqueOutputsOnCancellation(runnablePip);
+
+                    Logger.Log.ScheduleCancelingPipSinceScheduleIsTerminating(
+                        loggingContext,
+                        runnablePip.Description);
+                    return runnablePip.SetPipResult(PipResult.CreateWithPointPerformanceInfo(PipResultStatus.Canceled));
+                }
+
+                case PipExecutionStep.SkipDueToFailedDependencies:
+                {
+                    // We report skipped pips when all dependencies (failed or otherwise) complete.
+                    // This has the side-effect that stack depth is bounded when a pip fails; ReportSkippedPip
+                    // reports failure which is then handled in OnPipCompleted as part of the normal queue processing
+                    // (rather than recursively abandoning dependents here).
+                    LogEventWithPipProvenance(runnablePip, Logger.Log.SchedulePipFailedDueToFailedPrerequisite);
+                    return runnablePip.SetPipResult(PipResult.Skipped);
+                }
+
+                case PipExecutionStep.MaterializeOutputs:
+                {
+                    PipResultStatus materializationResult = await worker.MaterializeOutputsAsync(runnablePip);
+
+                    var nextStep = processRunnable?.ExecutionResult != null
+                        ? processRunnable.SetPipResult(processRunnable.ExecutionResult.CloneSealedWithResult(materializationResult))
+                        : runnablePip.SetPipResult(materializationResult);
+
+                    if (!MaterializeOutputsInBackground)
                     {
-                        Contract.Assert(pipType == PipType.Process || pipType == PipType.Ipc);
-
-                        PipResultStatus materializationResult = await worker.MaterializeInputsAsync(runnablePip);
-                        if (materializationResult.IndicatesFailure())
-                        {
-                            return runnablePip.SetPipResult(materializationResult);
-                        }
-
-                        worker.OnInputMaterializationCompletion(runnablePip.Pip, this);
-
-                        return pipType == PipType.Process ?
-                            PipExecutionStep.ExecuteProcess :
-                            PipExecutionStep.ExecuteNonProcessPip;
+                        return nextStep;
                     }
 
-                case PipExecutionStep.ExecuteNonProcessPip:
+                    if (materializationResult.IndicatesFailure())
                     {
-                        var pipResult = await ExecuteNonProcessPipAsync(runnablePip);
-
-                        if (runnablePip.PipType == PipType.Ipc && runnablePip.Worker?.IsRemote == true)
-                        {
-                            PipExecutionCounters.IncrementCounter(PipExecutorCounter.IpcPipsExecutedRemotely);
-                        }
-
-                        return runnablePip.SetPipResult(pipResult);
+                        m_hasFailures = true;
+                    }
+                    else
+                    {
+                        IncrementalSchedulingState?.PendingUpdates.MarkNodeMaterialized(runnablePip.PipId.ToNodeId());
+                        Logger.Log.PipIsMarkedMaterialized(loggingContext, runnablePip.Description);
                     }
 
-                case PipExecutionStep.CacheLookup:
+                    return PipExecutionStep.Done;
+                }
+
+                case PipExecutionStep.CheckIncrementalSkip:
+                {
+                    // Enable incremental scheduling when distributed build role is none, and
+                    // dirty build is not used (forceSkipDependencies is false).
+                    if (IsPipCleanMaterialized(pipId))
                     {
-                        Contract.Assert(processRunnable != null);
-                        Contract.Assert(worker != null);
-
-                        var process = processRunnable.Process;
-                        var pipScope = State.GetScope(process);
-                        var cacheableProcess = pipScope.GetCacheableProcess(process, environment);
-
-                        var cacheResult = await worker.CacheLookupAsync(
-                            processRunnable,
-                            pipScope,
-                            cacheableProcess);
-
-                        if (cacheResult == null)
+                        var maybeHashed = await fileContentManager.TryHashOutputsAsync(runnablePip.Pip, operationContext);
+                        if (!maybeHashed.Succeeded)
                         {
-                            Contract.Assert(loggingContext.ErrorWasLogged, "Error should have been logged for dependency pip.");
-                            return processRunnable.SetPipResult(ExecutionResult.GetFailureNotRunResult(loggingContext));
-                        }
-
-                        HandleDeterminismProbe(loggingContext, environment, cacheResult, runnablePip.Description);
-
-                        processRunnable.SetCacheableProcess(cacheableProcess);
-                        processRunnable.SetCacheResult(cacheResult);
-
-                        using (operationContext.StartOperation(PipExecutorCounter.ReportRemoteMetadataAndPathSetDuration))
-                        {
-                            // It only executes on master; but we still acquire the slot on the worker.
-                            if (cacheResult.CanRunFromCache && worker.IsRemote)
+                            if (maybeHashed.Failure is CancellationFailure)
                             {
-                                var cacheHitData = cacheResult.GetCacheHitData();
-                                m_pipTwoPhaseCache.ReportRemoteMetadataAndPathSet(
-                                    cacheHitData.Metadata,
-                                    cacheHitData.MetadataHash,
-                                    cacheHitData.PathSet,
-                                    cacheHitData.PathSetHash,
-                                    cacheResult.WeakFingerprint,
-                                    cacheHitData.StrongFingerprint,
-                                    isExecution: false);
+                                Contract.Assert(loggingContext.ErrorWasLogged);
                             }
-                        }
-
-                        if (cacheResult.CanRunFromCache)
-                        {
-                            // Always execute the process if the determinism probe is enabled.
-                            // Pips that must be run due to non-determinism are NOT counted as cache misses.
-                            if (!m_configuration.Cache.DeterminismProbe)
+                            else
                             {
-                                return PipExecutionStep.RunFromCache;
+                                Logger.Log.PipFailedDueToOutputsCannotBeHashed(
+                                    loggingContext,
+                                    runnablePip.Description);
                             }
                         }
                         else
                         {
-                            environment.Counters.IncrementCounter(PipExecutorCounter.ProcessPipsExecutedDueToCacheMiss);
+                            PipExecutionCounters.IncrementCounter(PipExecutorCounter.IncrementalSkipPipDueToCleanMaterialized);
+
+                            if (runnablePip.Pip.PipType == PipType.Process)
+                            {
+                                PipExecutionCounters.IncrementCounter(PipExecutorCounter.IncrementalSkipProcessDueToCleanMaterialized);
+                            }
+
+                            Logger.Log.PipIsIncrementallySkippedDueToCleanMaterialized(loggingContext, runnablePip.Description);
                         }
+
+                        return runnablePip.SetPipResult(PipResult.Create(
+                            maybeHashed.Succeeded ? PipResultStatus.UpToDate : PipResultStatus.Failed,
+                            runnablePip.StartTime));
+                    }
+
+                    if (m_scheduleConfiguration.ForceSkipDependencies != ForceSkipDependenciesMode.Disabled && m_mustExecuteNodesForDirtyBuild != null)
+                    {
+                        if (!m_mustExecuteNodesForDirtyBuild.Contains(pipId.ToNodeId()))
+                        {
+                            // When dirty build is enabled, we skip the scheduled pips whose outputs are present and are in the transitive dependency chain
+                            // The skipped ones during execution are not explicitly scheduled pips at all.
+                            return runnablePip.SetPipResult(PipResult.Create(
+                                PipResultStatus.UpToDate,
+                                runnablePip.StartTime));
+                        }
+
+                        using (PipExecutionCounters.StartStopwatch(PipExecutorCounter.HashProcessDependenciesDuration))
+                        {
+                            // The dependencies may have been skipped, so hash the processes inputs
+                            var maybeHashed = await fileContentManager.TryHashDependenciesAsync(runnablePip.Pip, operationContext);
+                            if (!maybeHashed.Succeeded)
+                            {
+                                if (!(maybeHashed.Failure is CancellationFailure))
+                                {
+                                    Logger.Log.PipFailedDueToDependenciesCannotBeHashed(
+                                        loggingContext,
+                                        runnablePip.Description);
+                                }
+
+                                return runnablePip.SetPipResult(PipResultStatus.Failed);
+                            }
+                        }
+                    }
+
+                    return pipType == PipType.Process ? PipExecutionStep.ChooseWorkerCacheLookup : PipExecutionStep.ExecuteNonProcessPip;
+                }
+
+                case PipExecutionStep.ChooseWorkerCacheLookup:
+                {
+                    Contract.Assert(pipType == PipType.Process);
+                    Contract.Assert(worker == null);
+
+                    worker = await m_chooseWorkerCacheLookup.ChooseWorkerAsync(runnablePip);
+                    if (worker == null)
+                    {
+                        // If none of the workers is available, enqueue again.
+                        // We always want to choose a worker for the highest priority item. That's why, we enqueue again
+                        return PipExecutionStep.ChooseWorkerCacheLookup;
+                    }
+
+                    worker.Transition(runnablePip.PipId, WorkerPipState.ChosenForCacheLookup);
+                    runnablePip.SetWorker(worker);
+
+                    return PipExecutionStep.CacheLookup;
+                }
+
+                case PipExecutionStep.ChooseWorkerCpu:
+                {
+                    Contract.Assert(pipType == PipType.Process || pipType == PipType.Ipc);
+                    Contract.Assert(worker == null);
+
+                    worker = await ChooseWorkerCpuAsync(runnablePip);
+                    if (worker == null)
+                    {
+                        // If none of the workers is available, enqueue again.
+                        // We always want to choose a worker for the highest priority item. That's why, we enqueue again
+                        return PipExecutionStep.ChooseWorkerCpu;
+                    }
+
+                    worker.Transition(runnablePip.PipId, WorkerPipState.ChosenForExecution);
+                    runnablePip.SetWorker(worker);
+                    if (InputsLazilyMaterialized)
+                    {
+                        // Materialize inputs if lazy materialization is enabled or this is a distributed build
+                        return PipExecutionStep.MaterializeInputs;
+                    }
+
+                    if (pipType == PipType.Process)
+                    {
+                        return PipExecutionStep.ExecuteProcess;
+                    }
+
+                    Contract.Assert(pipType == PipType.Ipc);
+                    return PipExecutionStep.ExecuteNonProcessPip;
+                }
+
+                case PipExecutionStep.MaterializeInputs:
+                {
+                    Contract.Assert(pipType == PipType.Process || pipType == PipType.Ipc);
+
+                    PipResultStatus materializationResult = await worker.MaterializeInputsAsync(runnablePip);
+                    if (materializationResult.IndicatesFailure())
+                    {
+                        return runnablePip.SetPipResult(materializationResult);
+                    }
+
+                    worker.OnInputMaterializationCompletion(runnablePip.Pip, this);
+
+                    return pipType == PipType.Process ?
+                        PipExecutionStep.ExecuteProcess :
+                        PipExecutionStep.ExecuteNonProcessPip;
+                }
+
+                case PipExecutionStep.ExecuteNonProcessPip:
+                {
+                    var pipResult = await ExecuteNonProcessPipAsync(runnablePip);
+
+                    if (runnablePip.PipType == PipType.Ipc && runnablePip.Worker?.IsRemote == true)
+                    {
+                        PipExecutionCounters.IncrementCounter(PipExecutorCounter.IpcPipsExecutedRemotely);
+                    }
+
+                    return runnablePip.SetPipResult(pipResult);
+                }
+
+                case PipExecutionStep.CacheLookup:
+                {
+                    Contract.Assert(processRunnable != null);
+                    Contract.Assert(worker != null);
+
+                    var process = processRunnable.Process;
+                    var pipScope = State.GetScope(process);
+                    var cacheableProcess = pipScope.GetCacheableProcess(process, environment);
+
+                    var cacheResult = await worker.CacheLookupAsync(
+                        processRunnable,
+                        pipScope,
+                        cacheableProcess);
+
+                    if (cacheResult == null)
+                    {
+                        Contract.Assert(loggingContext.ErrorWasLogged, "Error should have been logged for dependency pip.");
+                        return processRunnable.SetPipResult(ExecutionResult.GetFailureNotRunResult(loggingContext));
+                    }
+
+                    HandleDeterminismProbe(loggingContext, environment, cacheResult, runnablePip.Description);
+
+                    processRunnable.SetCacheableProcess(cacheableProcess);
+                    processRunnable.SetCacheResult(cacheResult);
+
+                    using (operationContext.StartOperation(PipExecutorCounter.ReportRemoteMetadataAndPathSetDuration))
+                    {
+                        // It only executes on master; but we still acquire the slot on the worker.
+                        if (cacheResult.CanRunFromCache && worker.IsRemote)
+                        {
+                            var cacheHitData = cacheResult.GetCacheHitData();
+                            m_pipTwoPhaseCache.ReportRemoteMetadataAndPathSet(
+                                cacheHitData.Metadata,
+                                cacheHitData.MetadataHash,
+                                cacheHitData.PathSet,
+                                cacheHitData.PathSetHash,
+                                cacheResult.WeakFingerprint,
+                                cacheHitData.StrongFingerprint,
+                                isExecution: false);
+                        }
+                    }
+
+                    if (cacheResult.CanRunFromCache)
+                    {
+                        // Always execute the process if the determinism probe is enabled.
+                        // Pips that must be run due to non-determinism are NOT counted as cache misses.
+                        if (!m_configuration.Cache.DeterminismProbe)
+                        {
+                            return PipExecutionStep.RunFromCache;
+                        }
+                    }
+                    else
+                    {
+                        environment.Counters.IncrementCounter(PipExecutorCounter.ProcessPipsExecutedDueToCacheMiss);
+                    }
+
+                    return PipExecutionStep.ChooseWorkerCpu;
+                }
+
+                case PipExecutionStep.RunFromCache:
+                {
+                    Contract.Assert(processRunnable != null);
+
+                    Process process = (Process)processRunnable.Pip;
+                    var pipScope = State.GetScope(process);
+                    var executionResult = await PipExecutor.RunFromCacheWithWarningsAsync(operationContext, environment, pipScope, process, processRunnable.CacheResult, processRunnable.Description);
+
+                    return processRunnable.SetPipResult(executionResult);
+                }
+
+                case PipExecutionStep.ExecuteProcess:
+                {
+                    MarkPipStartExecuting();
+
+                    if (processRunnable.Weight > 1)
+                    {
+                        // Only log for pips with non-standard process weights
+                        Logger.Log.ProcessPipProcessWeight(loggingContext, processRunnable.Description, processRunnable.Weight);
+                    }
+
+                    processRunnable.Executed = true;
+
+                    var executionResult = await worker.ExecuteProcessAsync(processRunnable);
+
+                    // Don't count service pips in process pip counters
+                    if (!processRunnable.Process.IsStartOrShutdownKind && executionResult.PerformanceInformation != null)
+                    {
+                        var perfInfo = executionResult.PerformanceInformation;
+
+                        if (perfInfo != null)
+                        {
+                            m_groupedPipCounters.AddToCounters(
+                                processRunnable.Process,
+                                new[]
+                                {
+                                        (PipCountersByGroup.IOReadBytes, (long)perfInfo.IO.ReadCounters.TransferCount),
+                                        (PipCountersByGroup.IOWriteBytes, (long)perfInfo.IO.WriteCounters.TransferCount)
+                                },
+                                new[] { (PipCountersByGroup.ExecuteProcessDuration, perfInfo.ProcessExecutionTime) }
+                            );
+                        }
+                    }
+
+                    // The pip was canceled
+                    if (executionResult.Result == PipResultStatus.Canceled && !IsTerminating)
+                    {
+                        // The pip was canceled on the worker (i.e. exceeded RAM utilization)
+                        // reschedule and choose worker again after adjusting expected RAM utilization
+                        processRunnable.SetWorker(null);
+
+                        if (worker.IsLocal)
+                        {
+                            // Because the scheduler will re-run this pip, we have to nuke all outputs created under shared opaque directories
+                            var sharedOpaqueOutputs = FlagAndReturnSharedOpaqueOutputs(environment, processRunnable);
+                            ScrubSharedOpaqueOutputs(sharedOpaqueOutputs);
+                        }
+
+                        // Use the max of the observed peak memory and the worker's expected RAM usage for the pip
+                        var expectedRamUsageMb = Math.Max(
+                                worker.GetExpectedRamUsageMb(processRunnable),
+                                Math.Max(1, executionResult.PerformanceInformation?.PeakMemoryUsageMb ?? 0));
+
+                        processRunnable.ExpectedRamUsageMb = expectedRamUsageMb;
 
                         return PipExecutionStep.ChooseWorkerCpu;
                     }
 
-                case PipExecutionStep.RunFromCache:
+                    if (runnablePip.Worker?.IsRemote == true)
                     {
-                        Contract.Assert(processRunnable != null);
+                        PipExecutionCounters.IncrementCounter(PipExecutorCounter.ProcessesExecutedRemotely);
 
-                        Process process = (Process)processRunnable.Pip;
-                        var pipScope = State.GetScope(process);
-                        var executionResult = await PipExecutor.RunFromCacheWithWarningsAsync(operationContext, environment, pipScope, process, processRunnable.CacheResult, processRunnable.Description);
-
-                        return processRunnable.SetPipResult(executionResult);
+                        m_pipTwoPhaseCache.ReportRemoteMetadataAndPathSet(
+                            executionResult.PipCacheDescriptorV2Metadata,
+                            executionResult.TwoPhaseCachingInfo?.CacheEntry.MetadataHash,
+                            executionResult.PathSet,
+                            executionResult.TwoPhaseCachingInfo?.PathSetHash,
+                            executionResult.TwoPhaseCachingInfo?.WeakFingerprint,
+                            executionResult.TwoPhaseCachingInfo?.StrongFingerprint,
+                            isExecution: true);
                     }
 
-                case PipExecutionStep.ExecuteProcess:
+                    if (m_configuration.Cache.DeterminismProbe && processRunnable.CacheResult.CanRunFromCache)
                     {
-                        MarkPipStartExecuting();
-
-                        if (processRunnable.Weight > 1)
-                        {
-                            // Only log for pips with non-standard process weights
-                            Logger.Log.ProcessPipProcessWeight(loggingContext, processRunnable.Description, processRunnable.Weight);
-                        }
-
-                        processRunnable.Executed = true;
-
-                        var executionResult = await worker.ExecuteProcessAsync(processRunnable);
-
-                        // Don't count service pips in process pip counters
-                        if (!processRunnable.Process.IsStartOrShutdownKind && executionResult.PerformanceInformation != null)
-                        {
-                            var perfInfo = executionResult.PerformanceInformation;
-
-                            if (perfInfo != null)
-                            {
-                                m_groupedPipCounters.AddToCounters(
-                                    processRunnable.Process,
-                                    new[]
-                                    {
-                                        (PipCountersByGroup.IOReadBytes, (long)perfInfo.IO.ReadCounters.TransferCount),
-                                        (PipCountersByGroup.IOWriteBytes, (long)perfInfo.IO.WriteCounters.TransferCount)
-                                    },
-                                    new[] { (PipCountersByGroup.ExecuteProcessDuration, perfInfo.ProcessExecutionTime) }
-                                );
-                            }
-                        }
-
-                        // The pip was canceled
-                        if (executionResult.Result == PipResultStatus.Canceled && !IsTerminating)
-                        {
-                            // The pip was canceled on the worker (i.e. exceeded RAM utilization)
-                            // reschedule and choose worker again after adjusting expected RAM utilization
-                            processRunnable.SetWorker(null);
-
-                            if (worker.IsLocal)
-                            {
-                                // Because the scheduler will re-run this pip, we have to nuke all outputs created under shared opaque directories
-                                var sharedOpaqueOutputs = FlagAndReturnSharedOpaqueOutputs(environment, processRunnable);
-                                ScrubSharedOpaqueOutputs(sharedOpaqueOutputs);
-                            }
-
-                            // Use the max of the observed peak memory and the worker's expected RAM usage for the pip
-                            var expectedRamUsageMb = Math.Max(
-                                    worker.GetExpectedRamUsageMb(processRunnable),
-                                    Math.Max(1, executionResult.PerformanceInformation?.PeakMemoryUsageMb ?? 0));
-
-                            processRunnable.ExpectedRamUsageMb = expectedRamUsageMb;
-
-                            return PipExecutionStep.ChooseWorkerCpu;
-                        }
-
-                        if (runnablePip.Worker?.IsRemote == true)
-                        {
-                            PipExecutionCounters.IncrementCounter(PipExecutorCounter.ProcessesExecutedRemotely);
-
-                            m_pipTwoPhaseCache.ReportRemoteMetadataAndPathSet(
-                                executionResult.PipCacheDescriptorV2Metadata,
-                                executionResult.TwoPhaseCachingInfo?.CacheEntry.MetadataHash,
-                                executionResult.PathSet,
-                                executionResult.TwoPhaseCachingInfo?.PathSetHash,
-                                executionResult.TwoPhaseCachingInfo?.WeakFingerprint,
-                                executionResult.TwoPhaseCachingInfo?.StrongFingerprint,
-                                isExecution: true);
-                        }
-
-                        if (m_configuration.Cache.DeterminismProbe && processRunnable.CacheResult.CanRunFromCache)
-                        {
-                            // Compare strong fingerprints between execution and cache hit for determinism probe
-                            return CheckMatchForDeterminismProbe(processRunnable);
-                        }
-
-                        return PipExecutionStep.PostProcess;
+                        // Compare strong fingerprints between execution and cache hit for determinism probe
+                        return CheckMatchForDeterminismProbe(processRunnable);
                     }
+
+                    return PipExecutionStep.PostProcess;
+                }
 
                 case PipExecutionStep.PostProcess:
+                {
+                    var executionResult = processRunnable.ExecutionResult;
+
+                    // Make sure all shared outputs are flagged as such.
+                    // We need to do this even if the pip failed, so any writes under shared opaques are flagged anyway.
+                    // This allows the scrubber to remove those files as well in the next run.
+                    var sharedOpaqueOutputs = FlagAndReturnSharedOpaqueOutputs(environment, processRunnable);
+
+                    // Set the process as executed. NOTE: We do this here rather than during ExecuteProcess to handle
+                    // case of processes executed remotely
+                    var pipScope = State.GetScope(processRunnable.Process);
+
+                    bool pipIsSafeToCache = true;
+
+                    IReadOnlyDictionary<FileArtifact, (FileMaterializationInfo, ReportedViolation)> allowedSameContentDoubleWriteViolations = null;
+
+                    if (!IsDistributedWorker)
                     {
-                        var executionResult = processRunnable.ExecutionResult;
+                        // File violation analysis needs to happen on the master as it relies on
+                        // graph-wide data such as detecting duplicate
+                        executionResult = PipExecutor.AnalyzeFileAccessViolations(
+                            operationContext,
+                            environment,
+                            pipScope,
+                            executionResult,
+                            processRunnable.Process,
+                            out pipIsSafeToCache,
+                            out allowedSameContentDoubleWriteViolations);
 
-                        // Make sure all shared outputs are flagged as such.
-                        // We need to do this even if the pip failed, so any writes under shared opaques are flagged anyway.
-                        // This allows the scrubber to remove those files as well in the next run.
-                        var sharedOpaqueOutputs = FlagAndReturnSharedOpaqueOutputs(environment, processRunnable);
+                        processRunnable.SetExecutionResult(executionResult);
 
-                        // Set the process as executed. NOTE: We do this here rather than during ExecuteProcess to handle
-                        // case of processes executed remotely
-                        var pipScope = State.GetScope(processRunnable.Process);
-
-                        bool pipIsSafeToCache = true;
-
-                        IReadOnlyDictionary<FileArtifact, (FileMaterializationInfo, ReportedViolation)> allowedSameContentDoubleWriteViolations = null;
-
-                        if (!IsDistributedWorker)
+                        if (executionResult.Result.IndicatesFailure())
                         {
-                            // File violation analysis needs to happen on the master as it relies on
-                            // graph-wide data such as detecting duplicate
-                            executionResult = PipExecutor.AnalyzeFileAccessViolations(
-                                operationContext,
-                                environment,
-                                pipScope,
-                                executionResult,
-                                processRunnable.Process,
-                                out pipIsSafeToCache,
-                                out allowedSameContentDoubleWriteViolations);
+                            // Dependency analysis failure. Bail out before performing post processing. This prevents
+                            // the output from being cached as well as downstream pips from being run.
+                            return processRunnable.SetPipResult(executionResult);
+                        }
+                    }
+
+                    if (pipIsSafeToCache)
+                    {
+                        // The worker should only cache the pip if the violation analyzer allows it to.
+                        executionResult = await worker.PostProcessAsync(processRunnable);
+                    }
+                    else
+                    {
+                        Logger.Log.ScheduleProcessNotStoredToCacheDueToFileMonitoringViolations(loggingContext, processRunnable.Description);
+                    }
+
+                    if (!IsDistributedWorker)
+                    {
+                        m_chooseWorkerCpu.ReportProcessExecutionOutputs(processRunnable, executionResult);
+
+                        // If the cache converged outputs, we need to check for double writes again, since the configured policy may care about
+                        // the content of the (final) outputs
+                        if (executionResult.Converged)
+                        {
+                            // On convergence, delete shared opaque outputs
+                            ScrubSharedOpaqueOutputs(sharedOpaqueOutputs);
+
+                            executionResult = PipExecutor.AnalyzeDoubleWritesOnCacheConvergence(
+                               operationContext,
+                               environment,
+                               pipScope,
+                               executionResult,
+                               processRunnable.Process,
+                               allowedSameContentDoubleWriteViolations);
 
                             processRunnable.SetExecutionResult(executionResult);
 
                             if (executionResult.Result.IndicatesFailure())
                             {
-                                // Dependency analysis failure. Bail out before performing post processing. This prevents
-                                // the output from being cached as well as downstream pips from being run.
+                                // Dependency analysis failure. Even though the pip is already cached, we got a cache converged event, so
+                                // it is safe for other downstream pips to consume the cached result. However, some double writes were found based
+                                // on the configured policy, so we fail the build
                                 return processRunnable.SetPipResult(executionResult);
                             }
                         }
-
-                        if (pipIsSafeToCache)
-                        {
-                            // The worker should only cache the pip if the violation analyzer allows it to.
-                            executionResult = await worker.PostProcessAsync(processRunnable);
-                        }
-                        else
-                        {
-                            Logger.Log.ScheduleProcessNotStoredToCacheDueToFileMonitoringViolations(loggingContext, processRunnable.Description);
-                        }
-
-                        if (!IsDistributedWorker)
-                        {
-                            m_chooseWorkerCpu.ReportProcessExecutionOutputs(processRunnable, executionResult);
-
-                            // If the cache converged outputs, we need to check for double writes again, since the configured policy may care about
-                            // the content of the (final) outputs
-                            if (executionResult.Converged)
-                            {
-                                // On convergence, delete shared opaque outputs
-                                ScrubSharedOpaqueOutputs(sharedOpaqueOutputs);
-
-                                executionResult = PipExecutor.AnalyzeDoubleWritesOnCacheConvergence(
-                                   operationContext,
-                                   environment,
-                                   pipScope,
-                                   executionResult,
-                                   processRunnable.Process,
-                                   allowedSameContentDoubleWriteViolations);
-
-                                processRunnable.SetExecutionResult(executionResult);
-
-                                if (executionResult.Result.IndicatesFailure())
-                                {
-                                    // Dependency analysis failure. Even though the pip is already cached, we got a cache converged event, so
-                                    // it is safe for other downstream pips to consume the cached result. However, some double writes were found based
-                                    // on the configured policy, so we fail the build
-                                    return processRunnable.SetPipResult(executionResult);
-                                }
-                            }
-                        }
-
-                        // Output content is reported here to ensure that it happens both on worker executing PostProcess and
-                        // master which called worker to execute post process.
-                        PipExecutor.ReportExecutionResultOutputContent(
-                            operationContext,
-                            environment,
-                            processRunnable.Description,
-                            executionResult,
-                            processRunnable.Process.DoubleWritePolicy.ImpliesDoubleWriteIsWarning());
-
-                        return processRunnable.SetPipResult(executionResult);
                     }
 
+                    // Output content is reported here to ensure that it happens both on worker executing PostProcess and
+                    // master which called worker to execute post process.
+                    PipExecutor.ReportExecutionResultOutputContent(
+                        operationContext,
+                        environment,
+                        processRunnable.Description,
+                        executionResult,
+                        processRunnable.Process.DoubleWritePolicy.ImpliesDoubleWriteIsWarning());
+
+                    return processRunnable.SetPipResult(executionResult);
+                }
+
                 case PipExecutionStep.HandleResult:
-                    await OnPipCompleted(runnablePip);
-                    return PipExecutionStep.Done;
+                await OnPipCompleted(runnablePip);
+                return PipExecutionStep.Done;
 
                 default:
-                    throw Contract.AssertFailure(I($"Do not know how to run this pip step: '{step}'"));
+                throw Contract.AssertFailure(I($"Do not know how to run this pip step: '{step}'"));
             }
         }
 
@@ -4061,47 +4061,47 @@ namespace BuildXL.Scheduler
             switch (runnablePip.PipType)
             {
                 case PipType.SealDirectory:
-                    // SealDirectory pips are also scheduler internal. Once completed, we can unblock consumers of the corresponding DirectoryArtifact
-                    // and mark the contained paths as immutable (thus no longer requiring a rewrite count).
-                    return ExecuteSealDirectoryPip(operationContext, (SealDirectory)pip);
+                // SealDirectory pips are also scheduler internal. Once completed, we can unblock consumers of the corresponding DirectoryArtifact
+                // and mark the contained paths as immutable (thus no longer requiring a rewrite count).
+                return ExecuteSealDirectoryPip(operationContext, (SealDirectory)pip);
 
                 case PipType.Value:
                 case PipType.SpecFile:
                 case PipType.Module:
-                    // Value, specfile, and module pips are noop.
-                    return PipResult.CreateWithPointPerformanceInfo(PipResultStatus.Succeeded);
+                // Value, specfile, and module pips are noop.
+                return PipResult.CreateWithPointPerformanceInfo(PipResultStatus.Succeeded);
 
                 case PipType.WriteFile:
-                    // Don't materialize eagerly (this is handled by the MaterializeOutputs step)
-                    return
-                        await
-                            PipExecutor.ExecuteWriteFileAsync(
-                                operationContext,
-                                environment,
-                                (WriteFile)pip,
-                                materializeOutputs: !m_configuration.Schedule.EnableLazyWriteFileMaterialization);
+                // Don't materialize eagerly (this is handled by the MaterializeOutputs step)
+                return
+                    await
+                        PipExecutor.ExecuteWriteFileAsync(
+                            operationContext,
+                            environment,
+                            (WriteFile)pip,
+                            materializeOutputs: !m_configuration.Schedule.EnableLazyWriteFileMaterialization);
 
                 case PipType.CopyFile:
-                    // Don't materialize eagerly (this is handled by the MaterializeOutputs step)
-                    return await PipExecutor.ExecuteCopyFileAsync(operationContext, environment, (CopyFile)pip, materializeOutputs: false);
+                // Don't materialize eagerly (this is handled by the MaterializeOutputs step)
+                return await PipExecutor.ExecuteCopyFileAsync(operationContext, environment, (CopyFile)pip, materializeOutputs: false);
 
                 case PipType.Ipc:
-                    var result = await runnablePip.Worker.ExecuteIpcAsync(runnablePip);
-                    if (!result.Status.IndicatesFailure())
-                    {
-                        // Output content is reported here to ensure that it happens both on worker executing IPC pip and
-                        // master which called worker to execute IPC pip.
-                        PipExecutor.ReportExecutionResultOutputContent(
-                            runnablePip.OperationContext,
-                            runnablePip.Environment,
-                            runnablePip.Description,
-                            runnablePip.ExecutionResult);
-                    }
+                var result = await runnablePip.Worker.ExecuteIpcAsync(runnablePip);
+                if (!result.Status.IndicatesFailure())
+                {
+                    // Output content is reported here to ensure that it happens both on worker executing IPC pip and
+                    // master which called worker to execute IPC pip.
+                    PipExecutor.ReportExecutionResultOutputContent(
+                        runnablePip.OperationContext,
+                        runnablePip.Environment,
+                        runnablePip.Description,
+                        runnablePip.ExecutionResult);
+                }
 
-                    return result;
+                return result;
 
                 default:
-                    throw Contract.AssertFailure("Do not know how to run pip " + pip);
+                throw Contract.AssertFailure("Do not know how to run pip " + pip);
             }
         }
 
@@ -4246,8 +4246,8 @@ namespace BuildXL.Scheduler
                 PipExecutionCounters.IncrementCounter(PipExecutorCounter.NumFilesFailedToMaterializeDueToEarlyWorkerRelease);
             }
 
-            string whenWorkerReleased = isWorkerReleasedEarly ? 
-                $"UTC {worker.WorkerEarlyReleasedTime.Value.ToLongTimeString()} ({(DateTime.UtcNow - worker.WorkerEarlyReleasedTime.Value).TotalMinutes.ToString("0.0")} minutes ago)" : 
+            string whenWorkerReleased = isWorkerReleasedEarly ?
+                $"UTC {worker.WorkerEarlyReleasedTime.Value.ToLongTimeString()} ({(DateTime.UtcNow - worker.WorkerEarlyReleasedTime.Value).TotalMinutes.ToString("0.0")} minutes ago)" :
                 "N/A";
 
             return $"{producer.FormattedSemiStableHash} {step} on Worker#{workerId} ({m_workers[(int)workerId].Status} - WhenReleased: {whenWorkerReleased})";
@@ -4272,14 +4272,14 @@ namespace BuildXL.Scheduler
             switch (sealDirectoryKind)
             {
                 case SealDirectoryKind.SourceAllDirectories:
-                    allDirectories = true;
-                    return true;
+                allDirectories = true;
+                return true;
                 case SealDirectoryKind.SourceTopDirectoryOnly:
-                    allDirectories = false;
-                    return true;
+                allDirectories = false;
+                return true;
                 default:
-                    allDirectories = false;
-                    return false;
+                allDirectories = false;
+                return false;
             }
         }
 
@@ -4684,6 +4684,93 @@ namespace BuildXL.Scheduler
             return true;
         }
 
+        private ConcurrentDictionary<(PipId, StringId), TimeSpan> m_pipChangeToCriticalPathTime = new ConcurrentDictionary<(PipId, StringId), TimeSpan>();
+        private ConcurrentDictionary<PipId, HashSet<StringId>> m_pipToImpactingChanges = new ConcurrentDictionary<PipId, HashSet<StringId>>();
+        private ConcurrentDictionary<StringId, (double, TimeSpan)> m_changeToCpuImpactingTime = new ConcurrentDictionary<StringId, (double, TimeSpan)>();
+        private StringId m_otherChange = StringId.Invalid;
+        private long m_TotalTimeTaken = 0;
+
+        private void UpdateChangeImpact(RunnablePip runnablePip, PipResult pipResult)
+        {
+            if (pipResult.PerformanceInfo.ExecutionLevel == PipExecutionLevel.Cached || pipResult.PerformanceInfo.ExecutionLevel == PipExecutionLevel.UpToDate || (runnablePip.PipType != PipType.Process && runnablePip.PipType != PipType.CopyFile && runnablePip.PipType != PipType.WriteFile))
+            {
+                return;
+            }
+
+            HashSet<StringId> changesWhichAffectedPip = new HashSet<StringId>();
+            if (runnablePip.PipType == PipType.CopyFile)
+            {
+                changesWhichAffectedPip.Add(Context.StringTable.AddString((runnablePip.Pip as CopyFile).Source.Path.ToString(Context.PathTable)));
+            }
+            else if (runnablePip.PipType == PipType.WriteFile)
+            {
+                changesWhichAffectedPip.Add(Context.StringTable.AddString("Write file input for: " + (runnablePip.Pip as WriteFile).Destination.Path.ToString(Context.PathTable)));
+            }
+            else
+            {
+                var stats = m_fingerprintStoreTarget.RetrieveCacheMissSummary(runnablePip.PipId);
+                if (stats != null)
+                {
+                    if (stats.Value.Summary != null && stats.Value.Summary.Any())
+                    {
+                        foreach (var summaryItem in stats.Value.Summary)
+                        {
+                            StringId changedItemStringId;
+                            if (summaryItem.Item1 == summaryItem.Item2 || summaryItem.Item2.Equals("Dependencies", StringComparison.OrdinalIgnoreCase) || summaryItem.Item2.Equals("DirectoryDependencies") || summaryItem.Item2.Equals("FileContentRead"))
+                            {
+                                changedItemStringId = Context.StringTable.AddString(summaryItem.Item1);
+                            }
+                            else
+                            {
+                                changedItemStringId = Context.StringTable.AddString(summaryItem.Item1 + " : " + summaryItem.Item2);
+                            }
+                            changesWhichAffectedPip.Add(changedItemStringId);
+                        }
+                    }
+                }
+            }
+            
+
+            TimeSpan timeTaken = pipResult.PerformanceInfo.ExecutionStop - pipResult.PerformanceInfo.ExecutionStart;
+            var incomingPips = new HashSet<PipId>(GetIncomingPips(runnablePip.PipId, pipResult));
+            foreach (var incomingPip in incomingPips)
+            {
+                if (m_pipToImpactingChanges.ContainsKey(incomingPip))
+                {
+                    changesWhichAffectedPip.UnionWith(m_pipToImpactingChanges[incomingPip]);
+                    foreach (var change in m_pipToImpactingChanges[incomingPip])
+                    {
+                        var existingCriticalPath = m_pipChangeToCriticalPathTime.ContainsKey((runnablePip.PipId, change)) ? m_pipChangeToCriticalPathTime[(runnablePip.PipId, change)] : TimeSpan.Zero;
+                        var incomingCriticalPath = m_pipChangeToCriticalPathTime[(incomingPip, change)] + timeTaken;
+                        m_pipChangeToCriticalPathTime[(runnablePip.PipId, change)] = incomingCriticalPath > existingCriticalPath ? incomingCriticalPath : existingCriticalPath;
+                    }
+                }
+            }
+
+            if (changesWhichAffectedPip.Count == 0)
+            {
+                if (m_otherChange == StringId.Invalid)
+                {
+                    m_otherChange = Context.StringTable.AddString("Unkown change");
+                }
+
+                changesWhichAffectedPip.Add(Context.StringTable.AddString("Unkown change " + runnablePip.Pip.GetDescription(Context)));
+            }
+
+            foreach (var changedItemStringId in changesWhichAffectedPip)
+            {
+                var newCritPath = m_pipChangeToCriticalPathTime.ContainsKey((runnablePip.PipId, changedItemStringId)) ? m_pipChangeToCriticalPathTime[(runnablePip.PipId, changedItemStringId)] : timeTaken;
+                m_pipChangeToCriticalPathTime[(runnablePip.PipId, changedItemStringId)] = newCritPath;
+                m_changeToCpuImpactingTime.AddOrUpdate(
+                    changedItemStringId,
+                    (timeTaken.TotalMilliseconds / changesWhichAffectedPip.Count, newCritPath),
+                    (id, existingValue) => (existingValue.Item1 + (timeTaken.TotalMilliseconds / changesWhichAffectedPip.Count), newCritPath > existingValue.Item2 ? newCritPath : existingValue.Item2));
+            }
+
+            Interlocked.Add(ref m_TotalTimeTaken, (long)timeTaken.TotalMilliseconds);
+            m_pipToImpactingChanges[runnablePip.PipId] = changesWhichAffectedPip;
+        }
+
         private void UpdateCriticalPath(RunnablePip runnablePip, PipExecutionPerformance performance)
         {
             var duration = runnablePip.RunningTime;
@@ -4733,25 +4820,26 @@ namespace BuildXL.Scheduler
         /// Given the execution performance of a just-completed pip, records its performance info for future schedules
         /// and notifies any execution observers.
         /// </summary>
-        private void HandleExecutionPerformance(RunnablePip runnablePip, PipExecutionPerformance performance)
+        private void HandleExecutionPerformance(RunnablePip runnablePip, PipResult pipResult)
         {
             var pip = runnablePip.Pip;
-            UpdateCriticalPath(runnablePip, performance);
+            UpdateCriticalPath(runnablePip, pipResult.PerformanceInfo);
+            UpdateChangeImpact(runnablePip, pipResult);
 
-            ProcessPipExecutionPerformance processPerf = performance as ProcessPipExecutionPerformance;
+            ProcessPipExecutionPerformance processPerf = pipResult.PerformanceInfo as ProcessPipExecutionPerformance;
             if (pip.PipType == PipType.Process &&
-                performance.ExecutionLevel == PipExecutionLevel.Executed &&
+                pipResult.PerformanceInfo.ExecutionLevel == PipExecutionLevel.Executed &&
                 processPerf != null)
             {
                 RunningTimeTable[pip.SemiStableHash] = new PipHistoricPerfData(processPerf);
             }
 
-            if (ExecutionLog != null && performance != null)
+            if (ExecutionLog != null && pipResult.PerformanceInfo != null)
             {
                 ExecutionLog.PipExecutionPerformance(new PipExecutionPerformanceEventData
                 {
                     PipId = pip.PipId,
-                    ExecutionPerformance = performance,
+                    ExecutionPerformance = pipResult.PerformanceInfo,
                 });
             }
         }
@@ -4894,12 +4982,12 @@ namespace BuildXL.Scheduler
                         {
                             case SandboxKind.MacOsEndpointSecurity:
                             {
-                                sandboxConnection = (ISandboxConnection) new SandboxConnectionES(isInTestMode: false, m_configuration.Sandbox.MeasureProcessCpuTimes);
+                                sandboxConnection = (ISandboxConnection)new SandboxConnectionES(isInTestMode: false, m_configuration.Sandbox.MeasureProcessCpuTimes);
                                 break;
                             }
                             default:
                             {
-                                sandboxConnection = (ISandboxConnection) new SandboxConnectionKext(config);
+                                sandboxConnection = (ISandboxConnection)new SandboxConnectionKext(config);
                                 break;
                             }
                         }
@@ -5009,7 +5097,7 @@ namespace BuildXL.Scheduler
                     m_configuration.Layout.SourceDirectory.ToString(Context.PathTable),
                     DirectoryTranslator);
 
-                    m_fileContentManager.SourceChangeAffectedContents.InitialAffectedOutputList(inputChangeList, Context.PathTable);
+                m_fileContentManager.SourceChangeAffectedContents.InitialAffectedOutputList(inputChangeList, Context.PathTable);
             }
 
             IncrementalSchedulingStateFactory incrementalSchedulingStateFactory = null;
@@ -5296,17 +5384,17 @@ namespace BuildXL.Scheduler
                                     switch (pipType)
                                     {
                                         case PipType.Process:
-                                            estimatedMilliseconds += 10;
-                                            break;
+                                        estimatedMilliseconds += 10;
+                                        break;
                                         case PipType.Ipc:
-                                            estimatedMilliseconds += 15;
-                                            break;
+                                        estimatedMilliseconds += 15;
+                                        break;
                                         case PipType.CopyFile:
-                                            estimatedMilliseconds += 2;
-                                            break;
+                                        estimatedMilliseconds += 2;
+                                        break;
                                         case PipType.WriteFile:
-                                            estimatedMilliseconds += 1;
-                                            break;
+                                        estimatedMilliseconds += 1;
+                                        break;
                                     }
 
                                     criticalPath += estimatedMilliseconds;
@@ -5944,11 +6032,11 @@ namespace BuildXL.Scheduler
                 switch (pip.PipType)
                 {
                     case PipType.WriteFile:
-                        startEvent = Logger.Log.WriteFileStart;
-                        break;
+                    startEvent = Logger.Log.WriteFileStart;
+                    break;
                     case PipType.CopyFile:
-                        startEvent = Logger.Log.CopyFileStart;
-                        break;
+                    startEvent = Logger.Log.CopyFileStart;
+                    break;
                 }
 
                 if (startEvent != null)
@@ -6008,11 +6096,11 @@ namespace BuildXL.Scheduler
                 switch (pip.PipType)
                 {
                     case PipType.WriteFile:
-                        endEvent = Logger.Log.WriteFileEnd;
-                        break;
+                    endEvent = Logger.Log.WriteFileEnd;
+                    break;
                     case PipType.CopyFile:
-                        endEvent = Logger.Log.CopyFileEnd;
-                        break;
+                    endEvent = Logger.Log.CopyFileEnd;
+                    break;
                 }
 
                 if (endEvent != null)
@@ -6174,6 +6262,33 @@ namespace BuildXL.Scheduler
                     {
                         yield return new PipReference(m_pipTable, item.Key, PipQueryContext.PipGraphRetrievePipsByStateOfType);
                     }
+                }
+            }
+        }
+
+        public (IReadOnlyDictionary<StringId, (double, TimeSpan)>, long) RetrieveChangeImpactTimes()
+        {
+            return (m_changeToCpuImpactingTime, m_TotalTimeTaken);
+        }
+
+        private IEnumerable<PipId> GetIncomingPips(PipId pip, PipResult pipResult)
+        {
+            foreach (var incomingNode in PipGraph.DataflowGraph.GetIncomingEdges(pip.ToNodeId()))
+            {
+                var incomingPip = incomingNode.OtherNode.ToPipId();
+                var pipState = m_pipTable.GetMutable(incomingPip);
+                if (pipState.PipType == PipType.Process || pipState.PipType == PipType.CopyFile || pipState.PipType == PipType.WriteFile)
+                {
+                    yield return incomingPip;
+                }
+            }
+
+            foreach (var observedFile in pipResult.DynamicallyObservedFiles)
+            {
+                PipId? incomingPip = PipGraph.TryFindProducerPipId(observedFile, VersionDisposition.Latest, null);
+                if (incomingPip.HasValue && incomingPip.Value.Value != pip.Value)
+                {
+                    yield return incomingPip.Value;
                 }
             }
         }

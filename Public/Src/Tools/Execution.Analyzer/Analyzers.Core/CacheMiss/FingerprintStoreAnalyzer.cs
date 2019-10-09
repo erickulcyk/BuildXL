@@ -310,13 +310,14 @@ namespace BuildXL.Execution.Analyzer
             WriteLine(pip.GetDescription(PipGraph.Context));
 
             var analysisResult = CacheMissAnalysisResult.Invalid;
+            IEnumerable<(string, string)> summary;
             if (m_newCacheLookupReader != null
                 && miss.CacheMissType == PipCacheMissType.MissForDescriptorsDueToStrongFingerprints
                 && m_newCacheLookupReader.Store.ContainsFingerprintStoreEntry(pip.FormattedSemiStableHash, pipUniqueOutputHashStr))
             {
                 // Strong fingerprint miss analysis is most accurate when compared to the fingerprints computed at cache lookup time
                 // because those fingerprints capture the state of the disk at cache lookup time, including dynamic observations
-                analysisResult = CacheMissAnalysisUtilities.AnalyzeCacheMiss(
+                (analysisResult, summary) = CacheMissAnalysisUtilities.AnalyzeCacheMiss(
                     writer,
                     miss,
                     () => m_oldReader.StartPipRecordingSession(pip, pipUniqueOutputHashStr),
@@ -324,7 +325,7 @@ namespace BuildXL.Execution.Analyzer
             }
             else
             {
-                analysisResult = CacheMissAnalysisUtilities.AnalyzeCacheMiss(
+                (analysisResult, summary) = CacheMissAnalysisUtilities.AnalyzeCacheMiss(
                     m_writer,
                     miss,
                     () => m_oldReader.StartPipRecordingSession(pip, pipUniqueOutputHash.ToString()),

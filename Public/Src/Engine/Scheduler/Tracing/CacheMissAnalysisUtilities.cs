@@ -2,49 +2,17 @@
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
 using System;
+using System.Collections.Generic;
 using System.Diagnostics.ContractsLight;
 using System.IO;
+using System.Linq;
 using BuildXL.Engine.Cache.Serialization;
+using BuildXL.Pips;
+using Newtonsoft.Json.Linq;
 using static BuildXL.Scheduler.Tracing.FingerprintStoreReader;
 
 namespace BuildXL.Scheduler.Tracing
 {
-    /// <summary>
-    /// Cache miss analysis result
-    /// </summary>
-    public enum CacheMissAnalysisResult
-    {
-        /// <nodoc/>
-        Invalid,
-
-        /// <nodoc/>
-        MissingFromOldBuild,
-
-        /// <nodoc/>
-        MissingFromNewBuild,
-
-        /// <nodoc/>
-        WeakFingerprintMismatch,
-
-        /// <nodoc/>
-        StrongFingerprintMismatch,
-
-        /// <nodoc/>
-        UncacheablePip,
-
-        /// <nodoc/>
-        DataMiss,
-
-        /// <nodoc/>
-        InvalidDescriptors,
-
-        /// <nodoc/>
-        ArtificialMiss,
-
-        /// <nodoc/>
-        NoMiss
-    }
-
     /// <summary>
     /// Cache miss analysis methods used by both on-the-fly and execution log analyzer
     /// </summary>
@@ -53,7 +21,7 @@ namespace BuildXL.Scheduler.Tracing
         /// <summary>
         /// Analyzes the cache miss for a specific pip.
         /// </summary>
-        public static CacheMissAnalysisResult AnalyzeCacheMiss(
+        public static (CacheMissAnalysisResult, IEnumerable<(string,string)>) AnalyzeCacheMiss(
             TextWriter writer,
             PipCacheMissInfo missInfo,
             Func<PipRecordingSession> oldSessionFunc,
@@ -79,36 +47,37 @@ namespace BuildXL.Scheduler.Tracing
                 case PipCacheMissType.MissForProcessMetadataFromHistoricMetadata:
                 case PipCacheMissType.MissForProcessOutputContent:
                     WriteLine($"Data missing from the cache.", writer);
-                    return CacheMissAnalysisResult.DataMiss;
+                    return (CacheMissAnalysisResult.DataMiss, null);
 
                 case PipCacheMissType.MissDueToInvalidDescriptors:
                     WriteLine($"Cache returned invalid data.", writer);
-                    return CacheMissAnalysisResult.InvalidDescriptors;
+                    return (CacheMissAnalysisResult.InvalidDescriptors, null);
 
                 case PipCacheMissType.MissForDescriptorsDueToArtificialMissOptions:
                     WriteLine($"Cache miss artificially forced by user.", writer);
-                    return CacheMissAnalysisResult.ArtificialMiss;
+                    return (CacheMissAnalysisResult.ArtificialMiss, null);
 
                 case PipCacheMissType.Invalid:
                     WriteLine($"Unexpected condition! No valid changes or cache issues were detected to cause process execution, but a process still executed.", writer);
-                    return CacheMissAnalysisResult.Invalid;
+                    return (CacheMissAnalysisResult.Invalid, null);
 
                 case PipCacheMissType.Hit:
                     WriteLine($"Pip was a cache hit.", writer);
-                    return CacheMissAnalysisResult.NoMiss;
+                    return (CacheMissAnalysisResult.NoMiss, null);
 
                 default:
                     WriteLine($"Unexpected condition! Unknown cache miss type.", writer);
-                    return CacheMissAnalysisResult.Invalid;
+                    return (CacheMissAnalysisResult.Invalid, null);
             }
         }
 
-        private static CacheMissAnalysisResult AnalyzeFingerprints(
+        private static (CacheMissAnalysisResult, IEnumerable<(string, string)>) AnalyzeFingerprints(
             Func<PipRecordingSession> oldSessionFunc,
             Func<PipRecordingSession> newSessionFunc,
             TextWriter writer)
         {
             var result = CacheMissAnalysisResult.Invalid;
+            IEnumerable<(string, string)> cacheMissSummary = null;
 
             // While a PipRecordingSession is in scope, any pip information retrieved from the fingerprint store is
             // automatically written out to per-pip files.
@@ -152,7 +121,7 @@ namespace BuildXL.Scheduler.Tracing
                     WriteLine(RepeatedStrings.DisallowedFileAccessesOrPipFailuresPreventCaching, writer);
 
                     // Nothing to compare if an entry is missing
-                    return result;
+                    return (result, cacheMissSummary);
                 }
 
                 if (oldPipSession.FormattedSemiStableHash != newPipSession.FormattedSemiStableHash)
@@ -170,7 +139,9 @@ namespace BuildXL.Scheduler.Tracing
                     };
                     newNode.Values.Add(newPipSession.FormattedSemiStableHash);
 
-                    WriteLine(JsonTree.PrintTreeDiff(oldNode, newNode), writer);
+                    var jsonDiff = JsonTree.GetTreeDiff(oldNode, newNode);
+                    // cacheMissSummary = GetCacheSummary(jsonDiff);
+                    WriteLine(JsonTree.PrintTreeDiff(jsonDiff), writer);
                 }
 
                 // Diff based off the actual fingerprints instead of the PipCacheMissType
@@ -186,13 +157,19 @@ namespace BuildXL.Scheduler.Tracing
                 if (oldPipSession.WeakFingerprint != newPipSession.WeakFingerprint)
                 {
                     WriteLine("WeakFingerprint", writer);
-                    WriteLine(JsonTree.PrintTreeDiff(oldPipSession.GetWeakFingerprintTree(), newPipSession.GetWeakFingerprintTree()), writer);
+                    var jsonDiff = JsonTree.GetTreeDiff(oldPipSession.GetWeakFingerprintTree(), newPipSession.GetWeakFingerprintTree());
+                    JObject jobj = jsonDiff.ToObject<JObject>();
+                    cacheMissSummary = GetCacheSummary(jobj);
+                    WriteLine(JsonTree.PrintTreeDiff(jsonDiff), writer);
                     result = CacheMissAnalysisResult.WeakFingerprintMismatch;
                 }
                 else if (oldPipSession.StrongFingerprint != newPipSession.StrongFingerprint)
                 {
                     WriteLine("StrongFingerprint", writer);
-                    WriteLine(JsonTree.PrintTreeDiff(oldPipSession.GetStrongFingerprintTree(), newPipSession.GetStrongFingerprintTree()), writer);
+                    var jsonDiff = JsonTree.GetTreeDiff(oldPipSession.GetStrongFingerprintTree(), newPipSession.GetStrongFingerprintTree());
+                    JObject jobj = jsonDiff.ToObject<JObject>();
+                    cacheMissSummary = GetCacheSummary(jobj);
+                    WriteLine(JsonTree.PrintTreeDiff(jsonDiff), writer);
                     result = CacheMissAnalysisResult.StrongFingerprintMismatch;
                 }
                 else
@@ -203,7 +180,205 @@ namespace BuildXL.Scheduler.Tracing
                 }
             }
 
-            return result;
+            return (result, cacheMissSummary);
+        }
+
+        private static HashSet<string> FingerprintPossibleCacheMissArrayReasons = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "Dependencies",
+            "DirectoryDependencies",
+            "DirectoryOutputs",
+            "Outputs",
+            "EnvironmentVariables",
+            "PathSet",
+            "UntrackedPaths",
+            "UntrackedScopes"
+        };
+
+        private static HashSet<string> FingerprintPossibleCacheMissReasons = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "Arguments",
+            "Executable",
+            "ExecutionAndFingerprintOptionsHash",
+            "ResponseFileData",
+            "StandardInputData",
+            "WorkingDirectory",
+        };
+
+        private static IEnumerable<(string, string)> GetCacheSummary(JObject o)
+        {
+            foreach (var changedProperty in o)
+            {
+                string changedPropertyName = changedProperty.Key;
+                JObject value = changedProperty.Value as JObject;
+                if (changedPropertyName == "PathSet" && (value.ContainsKey("0") || value.ContainsKey("_0")))
+                {
+                    yield return ("Path Set Change", "Path Set Change");
+                    break;
+                }
+                else if (FingerprintPossibleCacheMissArrayReasons.Contains(changedPropertyName))
+                {
+                    foreach (var arrayValue in TryParseArray(changedProperty.Value, true))
+                    {
+                        string arrayValueName = GetTokenName(arrayValue);
+                        string changedItemCategory = changedPropertyName;
+                        var children = arrayValue.Children();
+                        if (children.Any() && children.First() is JObject)
+                        {
+                            var categoryJson = children.First();
+                            string potentialCatetgoryName = GetTokenName(categoryJson);
+
+                            // This happens where there was more than one change to the same file for the same pip
+                            // Common case would be directory enumeration, where it will report both directory enumeration and which members changed.
+                            bool childIsArray = potentialCatetgoryName == "_t";
+                            if (childIsArray)
+                            {
+                                categoryJson = TryParseArray(categoryJson, false).First();
+                                potentialCatetgoryName = GetTokenName(categoryJson);
+                            }
+
+                            if (potentialCatetgoryName != null && potentialCatetgoryName == "ObservedInputs")
+                            {
+                                potentialCatetgoryName = ParseObservedInputCategory(categoryJson) ?? potentialCatetgoryName;
+                            }
+
+                            if (potentialCatetgoryName != null && potentialCatetgoryName != arrayValueName)
+                            {
+                                changedItemCategory = potentialCatetgoryName;
+                            }
+                        }
+
+                        /*if (copyFiles != null)
+                        {
+                            while (arrayValueName != null && copyFiles.ContainsKey(arrayValueName) && copyFiles[arrayValueName] != null)
+                            {
+                                changedItemCategory = "CopyFile";
+                                arrayValueName = copyFiles[arrayValueName];
+                            }
+                        }*/
+
+                        yield return (arrayValueName, changedItemCategory);
+                    }
+                }
+                else if (FingerprintPossibleCacheMissReasons.Contains(changedPropertyName))
+                {
+                    yield return (changedPropertyName, changedPropertyName);
+                }
+                else
+                {
+                    Console.Error.WriteLine("Unknown fingerprint json: \n" + changedPropertyName + "\n" + value);
+                }
+            }
+        }
+
+        private static IEnumerable<JToken> TryParseArray(JToken value, bool shouldBePath)
+        {
+            return value is JArray ? TryParseArray(value as JArray) : TryParseArray(value as JObject, shouldBePath);
+        }
+
+        private static IEnumerable<JToken> TryParseArray(JArray value)
+        {
+            return value.Children();
+        }
+
+        private static IEnumerable<JToken> TryParseArray(JObject value, bool shouldBePath)
+        {
+            Dictionary<string, JToken> arrayValuesChanged = new Dictionary<string, JToken>(StringComparer.OrdinalIgnoreCase);
+
+            foreach (var kvp in value)
+            {
+                int number;
+                if (int.TryParse(kvp.Key, out number) || int.TryParse(kvp.Key.Substring(1), out number))
+                {
+                    foreach (var child in kvp.Value.Children())
+                    {
+                        if (child is JProperty || child is JObject || child is JValue)
+                        {
+                            string tokenName = GetTokenName(child);
+                            if (arrayValuesChanged.ContainsKey(tokenName))
+                            {
+                                arrayValuesChanged.Remove(tokenName);
+                            }
+                            else
+                            {
+                                arrayValuesChanged[tokenName] = child;
+                            }
+                        }
+                        else
+                        {
+                            Console.WriteLine("Unrecognized array object: " + kvp.Key + "\n" + kvp.Value);
+                        }
+                    }
+                }
+                else if (kvp.Key != "_t")
+                {
+                    Console.WriteLine("Unreconized object: " + kvp.Key);
+                }
+            }
+
+            return arrayValuesChanged.Values;
+        }
+
+        private static string GetTokenName(JToken token)
+        {
+            var jprop = token as JProperty;
+            if (jprop != null)
+            {
+                return jprop.Name;
+            }
+
+            var jobj = token as JObject;
+            if (jobj != null)
+            {
+                return jobj.Children<JProperty>().First().Name;
+            }
+
+            var jValue = token as JValue;
+            if (jValue != null)
+            {
+                return jValue.Value.ToString();
+            }
+
+            var jArray = token as JArray;
+            if (jArray != null && jArray.Count > 0)
+            {
+                return GetTokenName(jArray.First());
+            }
+
+            Console.WriteLine("Unrecognized token: " + token);
+            return null;
+        }
+
+        private static string ParseObservedInputCategory(JToken categoryJson)
+        {
+            if (categoryJson is JObject)
+            {
+                categoryJson = categoryJson.First();
+            }
+
+            if (categoryJson is JProperty)
+            {
+                categoryJson = (categoryJson as JProperty).Value;
+                if (categoryJson is JArray)
+                {
+                    categoryJson = categoryJson.Children().First();
+                    return GetTokenName(categoryJson).Split(':')[0];
+                }
+                else if (categoryJson is JValue)
+                {
+                    return (categoryJson as JValue).Value.ToString().Split(':')[0];
+                }
+                else
+                {
+                    Console.WriteLine("Unknown ObservedInputs category json: " + categoryJson);
+                }
+            }
+            else
+            {
+                Console.WriteLine("Unknown category json: " + categoryJson);
+            }
+
+            return null;
         }
 
         private static void WriteLine(string message, TextWriter writer, params TextWriter[] additionalWriters)

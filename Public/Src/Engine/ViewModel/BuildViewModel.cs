@@ -17,6 +17,8 @@ namespace BuildXL.ViewModel
     {
         private Func<IEnumerable<PipReference>> m_retrieveExecutingProcessPips;
 
+        private Func<(IReadOnlyDictionary<StringId, (double, TimeSpan)>, long)> m_retrieveCacheMissStats;
+
         /// <nodoc />
         public PipExecutionContext Context { get; private set; }
 
@@ -39,6 +41,16 @@ namespace BuildXL.ViewModel
             return Enumerable.Empty<PipReference>();
         }
 
+        public (IReadOnlyDictionary<StringId, (double, TimeSpan)>, long) RetrieveCacheMissStats()
+        {
+            if (m_retrieveCacheMissStats != null)
+            {
+                return m_retrieveCacheMissStats();
+            }
+
+            return (null, 0);
+        }
+
         /// <summary>
         /// Sets the context with contains PathTable, and other global objects
         /// </summary>
@@ -50,9 +62,10 @@ namespace BuildXL.ViewModel
         /// <summary>
         /// Sets the function from the scheduler that provides the console logger access to currently executing pips
         /// </summary>
-        public void SetSchedulerDetails(Func<IEnumerable<PipReference>> retrieveExecutingProcessPips)
+        public void SetSchedulerDetails(Func<IEnumerable<PipReference>> retrieveExecutingProcessPips, Func<(IReadOnlyDictionary<StringId, (double, TimeSpan)>, long)> retrieveCacheMissStats)
         {
             m_retrieveExecutingProcessPips = retrieveExecutingProcessPips;
+            m_retrieveCacheMissStats = retrieveCacheMissStats;
         }
     }
 }
